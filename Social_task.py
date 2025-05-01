@@ -12,6 +12,7 @@ G = nx.from_pandas_edgelist(edge_filepath,source="Source",target="Target",create
 print("Number of nodes: ", G.number_of_nodes())
 print("Number of edges: ", G.number_of_edges())
 
+
 # Task 1 
 #(Louvain algorithm) Find the communities using Louvain algorithm
 # Apply Louvain algorithm
@@ -84,6 +85,22 @@ def calculate_modularity(G):
     print(f"The modularity of the detected communities is : {modularity:.3f}")
 
 
+def degree_distribution(G):
+# Calculate degrees for all nodes
+ degrees = dict(G.degree())
+
+# Calculate degree distribution
+ distribution = defaultdict(int)
+ for degree in degrees.values():
+    distribution[degree] += 1
+
+# Calculate normalized distribution
+ total_nodes = len(degrees)
+ normalized = {degree: count/total_nodes for degree, count in distribution.items()}
+ 
+ return dict(distribution), dict(normalized)
+
+
 # 3- Calculate coverage of each community
 def calculate_community_coverage(G):
     """Calculates the coverage of each community and prints the result."""
@@ -112,44 +129,6 @@ def calculate_pagerank(G):
     for node, score in sorted(pagerank.items(), key=lambda x: x[1], reverse=True):
         print(f"Node {node}: PageRank score = {score:.3f}")
 
-# Task 4 Filtering nodes based on centrality measures (use at least three centrality measures)
-# def compute_centralities(G):
-#     """Computes different centrality measures for each node in the graph 
-#     and returns a DataFrame with the results."""
-#     G = nx.Graph(G)
-
-#     degree_centrality = nx.degree_centrality(G)
-#     betweenness_centrality = nx.betweenness_centrality(G)
-#     eigenvector_centrality = nx.eigenvector_centrality(G)
-#     harmonic_centrality = nx.harmonic_centrality(G)
-#     closeness_centrality = nx.closeness_centrality(G)
-
-#     # Create a DataFrame to store the centrality values for each node
-#     df = pd.DataFrame(index=G.nodes())
-#     df.index.name = 'Node ID'
-#     df['degree'] = pd.Series(dict(G.degree())).astype(int)
-#     df['degree_centrality'] = pd.Series(degree_centrality).round(3)
-#     df['betweenness_centrality'] = pd.Series(betweenness_centrality).round(3)
-#     df['eigenvector_centrality'] = pd.Series(eigenvector_centrality).round(3)
-#     df['harmonic_centrality'] = pd.Series(harmonic_centrality).round(3)
-#     df['closeness_centrality'] = pd.Series(closeness_centrality).round(3)
-
-#     df = df.sort_values(by='Node ID')
-#     # Export the DataFrame to a CSV file
-#     #df.to_csv('C:/Users/MSI-PC/Desktop/Social Network Task/output.csv')        
-#     # Generate visualization
-#     pos = nx.spring_layout(G)
-#     cmap = plt.cm.tab20
-#     node_colors = [partition[node] for node in G.nodes()]
-#     node_sizes = [G.degree(node) for node in G.nodes()]
-#     nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, cmap=cmap)
-#     nx.draw_networkx_edges(G, pos)
-#     labels = {node: node for node in G.nodes()}
-#     nx.draw_networkx_labels(G, pos, labels=labels,font_size=5)
-#     plt.title('Louvain algorithm')
-#     plt.colorbar(mappable=plt.cm.ScalarMappable(cmap=cmap), label="Community")
-#     plt.axis('off')
-#     plt.show()
 
 def compute_centralities(G):
     """Computes different centrality measures for each node in the graph 
@@ -160,6 +139,8 @@ def compute_centralities(G):
     eigenvector_centrality = nx.eigenvector_centrality(G)
     harmonic_centrality = nx.harmonic_centrality(G)
     closeness_centrality = nx.closeness_centrality(G)
+    degree_counts, degree_probs = degree_distribution(G)
+
 
     # Create a DataFrame to store the centrality values for each node
     df = pd.DataFrame(index=G.nodes())
@@ -167,6 +148,8 @@ def compute_centralities(G):
     df['degree'] = pd.Series(dict(G.degree())).astype(int)
     df['degree_centrality'] = pd.Series(degree_centrality).round(3)
     df['betweenness_centrality'] = pd.Series(betweenness_centrality).round(3)
+    df['degree_disterbution'] = pd.Series ( degree_probs).round(3)
+
     df['eigenvector_centrality'] = pd.Series(eigenvector_centrality).round(3)
     df['harmonic_centrality'] = pd.Series(harmonic_centrality).round(3)
     df['closeness_centrality'] = pd.Series(closeness_centrality).round(3)
@@ -232,3 +215,18 @@ print("The average coverage of the communities is {:.3f}".format(average_coverag
 #     #  even if the input graph is the same.
 
 # calculate_conductance(G, partition)
+
+def degree_distribution(G):
+# Calculate degrees for all nodes
+ degrees = dict(G.degree())
+
+# Calculate degree distribution
+ distribution = defaultdict(int)
+ for degree in degrees.values():
+    distribution[degree] += 1
+
+# Calculate normalized distribution
+ total_nodes = len(degrees)
+ normalized = {degree: count/total_nodes for degree, count in distribution.items()}
+ 
+ return dict(distribution), dict(normalized)

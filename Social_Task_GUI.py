@@ -8,7 +8,8 @@ from community import best_partition
 from sklearn.metrics import normalized_mutual_info_score
 import numpy as np
 from collections import defaultdict
-
+#  (degree, degree 
+# distribution, clustering coefficient, average clustering coefficient, average path length, etc.). 
 class SocialNetworkAnalyzer:
     def __init__(self, root):
         self.root = root
@@ -117,8 +118,12 @@ class SocialNetworkAnalyzer:
         ttk.Button(frame, text="Run Girvan-Newman Community Detection", 
                   command=lambda: self.run_community_detection("girvan")).pack(fill=tk.X, pady=2)
         
+        
         ttk.Button(frame, text="Calculate PageRank", command=self.calculate_pagerank).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate CLustring Coe",command= self.clustring_coe).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate Degree dist Coe",command= self.plot_degree_distribution).pack(fill=tk.X, pady=2)
+      
         
     def setup_filter_controls(self):
         frame = ttk.LabelFrame(self.control_frame, text="Filter Nodes", padding=10)
@@ -362,6 +367,19 @@ class SocialNetworkAnalyzer:
         except Exception as e:
             messagebox.showerror("Error", f"Betweenness calculation failed: {str(e)}")
     
+    def clustring_coe(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            
+            return
+            
+        try:
+            result = nx.algorithms.clustering(self.G)
+        
+            messagebox.showinfo("CLustring Results", result)
+        except Exception as e:
+            messagebox.showerror("Error", f"Clustring calculation failed: {str(e)}")
+
     def apply_filter(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
@@ -405,8 +423,9 @@ class SocialNetworkAnalyzer:
             
         except Exception as e:
             messagebox.showerror("Error", f"Filtering failed: {str(e)}")
-    
+   
     def reset_graph(self):
+        
         try:
             if self.original_graph is not None:
                 self.G = self.original_graph.copy()
@@ -415,6 +434,35 @@ class SocialNetworkAnalyzer:
                 messagebox.showinfo("Success", "Graph reset to original state")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to reset graph: {str(e)}")
+            
+
+
+
+    def plot_degree_distribution(self): 
+        """Plot the degree distribution of the graph"""
+        try:
+            if not self.create_graph():
+                return
+                
+            degrees = [d for n, d in self.G.degree()]
+            
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            
+            ax.hist(degrees, bins=20, color='skyblue', edgecolor='black')
+            ax.set_title('Degree Distribution')
+            ax.set_xlabel('Degree')
+            ax.set_ylabel('Frequency')
+            ax.grid(True)
+            
+            self.canvas.draw()
+            self.log_message("Degree distribution plotted")
+            
+        except Exception as e:
+            self.show_error("Error plotting degree distribution", str(e))
+
+        
+
 
 if __name__ == "__main__":
     root = tk.Tk()
