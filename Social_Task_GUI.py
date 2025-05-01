@@ -8,8 +8,8 @@ from community import best_partition
 from sklearn.metrics import normalized_mutual_info_score
 import numpy as np
 from collections import defaultdict
-#  (degree, degree 
-# distribution, clustering coefficient, average clustering coefficient, average path length, etc.). 
+import math
+
 class SocialNetworkAnalyzer:
     def __init__(self, root):
         self.root = root
@@ -75,7 +75,7 @@ class SocialNetworkAnalyzer:
         ttk.Label(frame, text="Layout:").pack(anchor=tk.W)
         self.layout_var = tk.StringVar(value="spring")
         ttk.Combobox(frame, textvariable=self.layout_var, 
-                    values=["spring", "circular", "kamada-kawai", "spectral", "shell"]).pack(fill=tk.X)
+                    values=["spring", "circular", "kamada-kawai", "spectral", "shell", "tree", "radial"]).pack(fill=tk.X)
         
         # Node size control
         ttk.Label(frame, text="Node Size:").pack(anchor=tk.W)
@@ -118,12 +118,11 @@ class SocialNetworkAnalyzer:
         ttk.Button(frame, text="Run Girvan-Newman Community Detection", 
                   command=lambda: self.run_community_detection("girvan")).pack(fill=tk.X, pady=2)
         
-        
         ttk.Button(frame, text="Calculate PageRank", command=self.calculate_pagerank).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate CLustring Coe",command= self.clustring_coe).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate Degree dist Coe",command= self.plot_degree_distribution).pack(fill=tk.X, pady=2)
-      
+        ttk.Button(frame, text="Calculate Clustering Coefficients", command=self.calculate_clustering).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Degree Distribution", command=self.plot_degree_distribution).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
         
     def setup_filter_controls(self):
         frame = ttk.LabelFrame(self.control_frame, text="Filter Nodes", padding=10)
@@ -143,7 +142,7 @@ class SocialNetworkAnalyzer:
         
     def choose_node_color(self):
         color = colorchooser.askcolor(title="Choose Node Color", initialcolor=self.custom_color)
-        if color[1]:  # User didn't cancel
+        if color[1]:
             self.custom_color = color[1]
             self.color_preview.config(bg=self.custom_color)
             self.update_visualization()
@@ -232,10 +231,6 @@ class SocialNetworkAnalyzer:
         if len(self.G.nodes()) <= 50:
             nx.draw_networkx_labels(self.G, self.layout_pos, ax=ax, font_size=8)
         
-        if self.current_layout in ["shell", "circular"]:
-            ax.set_xlim([-1.1, 1.1])
-            ax.set_ylim([-1.1, 1.1])
-        
         self.canvas.draw()
     
     def get_node_colors(self):
@@ -266,23 +261,64 @@ class SocialNetworkAnalyzer:
             if layout == "spring":
                 return nx.spring_layout(self.G, seed=self.layout_seed)
             elif layout == "circular":
-                pos = nx.circular_layout(self.G)
-                return {k: np.array(v)*0.8 for k, v in pos.items()}
+                return nx.circular_layout(self.G)
             elif layout == "kamada-kawai":
                 return nx.kamada_kawai_layout(self.G)
             elif layout == "spectral":
                 return nx.spectral_layout(self.G)
             elif layout == "shell":
-                shells = [[] for _ in range(min(4, len(self.G.nodes())))]
-                for i, node in enumerate(self.G.nodes()):
-                    shells[i % len(shells)].append(node)
-                pos = nx.shell_layout(self.G, nlist=shells)
-                return {k: np.array(v)*0.8 for k, v in pos.items()}
+                return nx.shell_layout(self.G)
+            elif layout == "tree":
+                return self.tree_layout()
+            elif layout == "radial":
+                return self.radial_layout()
             else:
                 return nx.spring_layout(self.G, seed=self.layout_seed)
         except Exception as e:
             messagebox.showerror("Layout Error", str(e))
             return nx.spring_layout(self.G, seed=self.layout_seed)
+    
+    def tree_layout(self):
+        """Hierarchical tree layout using BFS levels"""
+        if len(self.G.nodes()) == 0:
+            return {}
+            
+        root = max(self.G.degree(), key=lambda x: x[1])[0]
+        levels = {root: 0}
+        queue = [root]
+        
+        while queue:
+            current = queue.pop(0)
+            for neighbor in self.G.neighbors(current):
+                if neighbor not in levels:
+                    levels[neighbor] = levels[current] + 1
+                    queue.append(neighbor)
+        
+        max_level = max(levels.values())
+        pos = {}
+        for node, level in levels.items():
+            y = max_level - level
+            x = len([n for n in levels if levels[n] == level and n <= node])
+            pos[node] = (x - 0.5 * (len(levels) ** 0.5), y)
+        
+        return pos
+    
+    def radial_layout(self):
+        """Radial layout with root at center"""
+        if len(self.G.nodes()) == 0:
+            return {}
+            
+        root = max(self.G.degree(), key=lambda x: x[1])[0]
+        levels = nx.single_source_shortest_path_length(self.G, root)
+        max_level = max(levels.values()) if levels else 1
+        
+        pos = {}
+        for node, level in levels.items():
+            angle = (node.__hash__() % 628) / 100  # Random angle between 0-6.28
+            radius = level / max_level
+            pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
+        
+        return pos
     
     def force_new_layout(self):
         self.layout_pos = None
@@ -303,7 +339,6 @@ class SocialNetworkAnalyzer:
                 self.communities = {node: i for i, comm in enumerate(next(communities)) for node in comm}
                 message = "Girvan-Newman communities detected"
             
-            # Force community coloring and refresh
             self.color_var.set("community")
             self.show_community_metrics()
             self.update_visualization()
@@ -367,19 +402,59 @@ class SocialNetworkAnalyzer:
         except Exception as e:
             messagebox.showerror("Error", f"Betweenness calculation failed: {str(e)}")
     
-    def clustring_coe(self):
+    def calculate_clustering(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
-            
             return
             
         try:
-            result = nx.algorithms.clustering(self.G)
-        
-            messagebox.showinfo("CLustring Results", result)
+            clustering = nx.clustering(self.G)
+            avg_clustering = nx.average_clustering(self.G)
+            result = f"Average Clustering Coefficient: {avg_clustering:.3f}\n\n"
+            result += "Top 10 Nodes by Clustering:\n"
+            top_nodes = sorted(clustering.items(), key=lambda x: x[1], reverse=True)[:10]
+            result += "\n".join([f"{node}: {score:.3f}" for node, score in top_nodes])
+            messagebox.showinfo("Clustering Results", result)
         except Exception as e:
-            messagebox.showerror("Error", f"Clustring calculation failed: {str(e)}")
-
+            messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
+    
+    def plot_degree_distribution(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            degrees = [d for _, d in self.G.degree()]
+            self.figure.clf()
+            ax = self.figure.add_subplot(111)
+            
+            ax.hist(degrees, bins=20, color='skyblue', edgecolor='black')
+            ax.set_title("Degree Distribution")
+            ax.set_xlabel("Degree")
+            ax.set_ylabel("Count")
+            
+            self.canvas.draw()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to plot degree distribution: {str(e)}")
+    
+    def calculate_path_length(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            if nx.is_connected(self.G):
+                avg_path = nx.average_shortest_path_length(self.G)
+                messagebox.showinfo("Path Length", f"Average Shortest Path Length: {avg_path:.3f}")
+            else:
+                messagebox.showinfo("Path Length", "Graph is not connected - showing largest component")
+                largest_cc = max(nx.connected_components(self.G.to_undirected()), key=len)
+                subgraph = self.G.subgraph(largest_cc)
+                avg_path = nx.average_shortest_path_length(subgraph)
+                messagebox.showinfo("Path Length", f"Average Path in Largest Component: {avg_path:.3f}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Path length calculation failed: {str(e)}")
+    
     def apply_filter(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
@@ -423,9 +498,8 @@ class SocialNetworkAnalyzer:
             
         except Exception as e:
             messagebox.showerror("Error", f"Filtering failed: {str(e)}")
-   
+    
     def reset_graph(self):
-        
         try:
             if self.original_graph is not None:
                 self.G = self.original_graph.copy()
@@ -434,35 +508,6 @@ class SocialNetworkAnalyzer:
                 messagebox.showinfo("Success", "Graph reset to original state")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to reset graph: {str(e)}")
-            
-
-
-
-    def plot_degree_distribution(self): 
-        """Plot the degree distribution of the graph"""
-        try:
-            if not self.create_graph():
-                return
-                
-            degrees = [d for n, d in self.G.degree()]
-            
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            
-            ax.hist(degrees, bins=20, color='skyblue', edgecolor='black')
-            ax.set_title('Degree Distribution')
-            ax.set_xlabel('Degree')
-            ax.set_ylabel('Frequency')
-            ax.grid(True)
-            
-            self.canvas.draw()
-            self.log_message("Degree distribution plotted")
-            
-        except Exception as e:
-            self.show_error("Error plotting degree distribution", str(e))
-
-        
-
 
 if __name__ == "__main__":
     root = tk.Tk()

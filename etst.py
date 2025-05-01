@@ -282,6 +282,22 @@ class NetworkAnalysisGUI:
         ttk.Button(filter_frame, text="Run PageRank", style='Primary.TButton',
                   command=lambda: self.run_pagerank()).pack(fill=tk.X, padx=5, pady=2)
         
+        # New Clustering and Path Metrics Section
+        clustering_frame = ttk.LabelFrame(self.scrollable_frame, text="Clustering & Path Metrics", style='Header.TLabel')
+        clustering_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(clustering_frame, text="Show Clustering Coefficient", style='Primary.TButton',
+                  command=self.show_clustering_coefficient).pack(fill=tk.X, padx=5, pady=2)
+        
+        ttk.Button(clustering_frame, text="Show Average Clustering", style='Primary.TButton',
+                  command=self.show_average_clustering).pack(fill=tk.X, padx=5, pady=2)
+        
+        ttk.Button(clustering_frame, text="Show Average Path Length", style='Primary.TButton',
+                  command=self.show_average_path_length).pack(fill=tk.X, padx=5, pady=2)
+        
+        ttk.Button(clustering_frame, text="Show Harmonic Centrality", style='Primary.TButton',
+                  command=self.show_harmonic_centrality).pack(fill=tk.X, padx=5, pady=2)
+        
         # Metrics Section
         metrics_frame = ttk.LabelFrame(self.scrollable_frame, text="Metrics", style='Header.TLabel')
         metrics_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -912,6 +928,97 @@ class NetworkAnalysisGUI:
         except Exception as e:
             self.show_error("Error calculating ARI", str(e))
 
+    def show_clustering_coefficient(self):
+        """Calculate and display clustering coefficient for each node"""
+        try:
+            if not self.create_graph():
+                return
+                
+            if self.graph_type.get() == 'Directed Graph':
+                clustering = nx.clustering(self.G.to_undirected())
+            else:
+                clustering = nx.clustering(self.G)
+            
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, "Clustering Coefficients:\n\n")
+            
+            # Sort nodes by clustering coefficient
+            sorted_nodes = sorted(clustering.items(), key=lambda x: x[1], reverse=True)
+            
+            for node, coeff in sorted_nodes:
+                self.output_text.insert(tk.END, f"Node {node}: {coeff:.4f}\n")
+            
+            avg_clustering = sum(clustering.values()) / len(clustering)
+            self.output_text.insert(tk.END, f"\nAverage Clustering Coefficient: {avg_clustering:.4f}")
+            
+            self.log_message("Clustering coefficients calculated")
+            
+        except Exception as e:
+            self.show_error("Error calculating clustering coefficients", str(e))
+
+    def show_average_clustering(self):
+        """Calculate and display the average clustering coefficient"""
+        try:
+            if not self.create_graph():
+                return
+                
+            if self.graph_type.get() == 'Directed Graph':
+                avg_clustering = nx.average_clustering(self.G.to_undirected())
+            else:
+                avg_clustering = nx.average_clustering(self.G)
+            
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, f"Average Clustering Coefficient: {avg_clustering:.4f}")
+            
+            self.log_message(f"Average clustering coefficient calculated: {avg_clustering:.4f}")
+            
+        except Exception as e:
+            self.show_error("Error calculating average clustering coefficient", str(e))
+
+    def show_average_path_length(self):
+        """Calculate and display the average shortest path length"""
+        try:
+            if not self.create_graph():
+                return
+                
+            if not nx.is_connected(self.G.to_undirected()):
+                raise ValueError("Graph must be connected to calculate average path length")
+                
+            avg_path_length = nx.average_shortest_path_length(self.G)
+            
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, f"Average Shortest Path Length: {avg_path_length:.4f}")
+            
+            self.log_message(f"Average shortest path length calculated: {avg_path_length:.4f}")
+            
+        except Exception as e:
+            self.show_error("Error calculating average path length", str(e))
+
+    def show_harmonic_centrality(self):
+        """Calculate and display harmonic centrality for each node"""
+        try:
+            if not self.create_graph():
+                return
+                
+            harmonic = nx.harmonic_centrality(self.G)
+            
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, "Harmonic Centrality Scores:\n\n")
+            
+            # Sort nodes by harmonic centrality
+            sorted_nodes = sorted(harmonic.items(), key=lambda x: x[1], reverse=True)
+            
+            for node, centrality in sorted_nodes:
+                self.output_text.insert(tk.END, f"Node {node}: {centrality:.4f}\n")
+            
+            avg_harmonic = sum(harmonic.values()) / len(harmonic)
+            self.output_text.insert(tk.END, f"\nAverage Harmonic Centrality: {avg_harmonic:.4f}")
+            
+            self.log_message("Harmonic centrality calculated")
+            
+        except Exception as e:
+            self.show_error("Error calculating harmonic centrality", str(e))
+
     def clear_all(self):
         """Clear all data and visualizations"""
         self.figure.clear()
@@ -945,4 +1052,4 @@ if __name__ == "__main__":
     except Exception as e:
         error_msg = f"Unhandled exception: {str(e)}\n{traceback.format_exc()}"
         messagebox.showerror("Critical Error", error_msg)
-        sys.exit(1) 
+        sys.exit(1)
