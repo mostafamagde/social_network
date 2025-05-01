@@ -1,11 +1,12 @@
 import pandas as pd
 import networkx as nx
 import community as community_louvain
+import numpy as np
 from sklearn.metrics.cluster import normalized_mutual_info_score, adjusted_rand_score
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk, colorchooser
 from matplotlib.figure import Figure
 import traceback
 import sys
@@ -26,6 +27,18 @@ class NetworkAnalysisGUI:
         self.random_seed = tk.IntVar(value=42)
         self.selected_layout = tk.StringVar(value="spring")
         self.selected_community = tk.StringVar(value="louvain")
+        
+        # Node styling variables
+        self.node_single_color = tk.StringVar(value="#4a6baf")
+        self.node_shape = tk.StringVar(value="circle")
+        self.node_label_visible = tk.BooleanVar(value=True)
+        self.node_label_size = tk.IntVar(value=8)
+        
+        # Edge styling variables
+        self.edge_single_color = tk.StringVar(value="#666666")
+        self.edge_width = tk.IntVar(value=1)
+        self.edge_style = tk.StringVar(value="solid")
+        self.arrow_size = tk.IntVar(value=10)
         
         # Configure styles
         self.configure_styles()
@@ -161,17 +174,78 @@ class NetworkAnalysisGUI:
         # Node size control
         ttk.Label(vis_frame, text="Node Size:").pack(anchor=tk.W, padx=5)
         ttk.Scale(vis_frame, from_=10, to=1000, variable=self.node_size,
-                 command=lambda x: None).pack(fill=tk.X, padx=5, pady=2)
+                 command=lambda x: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
         
         # Layout algorithm selection
         ttk.Label(vis_frame, text="Layout Algorithm:").pack(anchor=tk.W, padx=5)
         layout_menu = ttk.OptionMenu(vis_frame, self.selected_layout, "spring", 
-                                   "spring", "circular", "random", "shell", "spectral")
+                                   "spring", "circular", "random", "shell", "spectral",
+                                   "tree", "radial",
+                                   command=lambda _: self.redraw_graph())
         layout_menu.pack(fill=tk.X, padx=5, pady=2)
         
         # Random seed control
         ttk.Label(vis_frame, text="Random Seed:").pack(anchor=tk.W, padx=5)
         ttk.Entry(vis_frame, textvariable=self.random_seed).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Node Styling Section
+        node_style_frame = ttk.LabelFrame(self.scrollable_frame, text="Node Styling", style='Header.TLabel')
+        node_style_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Color Picker
+        self.node_color_picker_frame = ttk.Frame(node_style_frame)
+        ttk.Label(self.node_color_picker_frame, text="Node Color:").pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.node_color_picker_frame, text="Pick", 
+                  command=self.pick_node_color).pack(side=tk.LEFT, padx=5)
+        self.node_color_preview = tk.Canvas(self.node_color_picker_frame, width=20, height=20)
+        self.node_color_preview.create_rectangle(0, 0, 20, 20, fill=self.node_single_color.get(), outline="")
+        self.node_color_preview.pack(side=tk.LEFT)
+        self.node_color_picker_frame.pack(fill=tk.X, padx=5, pady=2)
+
+        # Node Shape
+        ttk.Label(node_style_frame, text="Shape:").pack(anchor=tk.W, padx=5)
+        shape_menu = ttk.OptionMenu(node_style_frame, self.node_shape, "circle", 
+                                  "circle", "square", "triangle", "diamond",
+                                  command=lambda _: self.redraw_graph())
+        shape_menu.pack(fill=tk.X, padx=5, pady=2)
+
+        # Node Labels
+        ttk.Checkbutton(node_style_frame, text="Show Labels", 
+                       variable=self.node_label_visible,
+                       command=self.redraw_graph).pack(anchor=tk.W, padx=5)
+        ttk.Label(node_style_frame, text="Label Size:").pack(anchor=tk.W, padx=5)
+        ttk.Scale(node_style_frame, from_=6, to=20, variable=self.node_label_size,
+                 command=lambda _: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Edge Styling Section
+        edge_style_frame = ttk.LabelFrame(self.scrollable_frame, text="Edge Styling", style='Header.TLabel')
+        edge_style_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Edge Color
+        ttk.Label(edge_style_frame, text="Color:").pack(anchor=tk.W, padx=5)
+        ttk.Button(edge_style_frame, text="Pick Edge Color", 
+                  command=self.pick_edge_color).pack(fill=tk.X, padx=5, pady=2)
+
+        # Edge Width
+        ttk.Label(edge_style_frame, text="Width:").pack(anchor=tk.W, padx=5)
+        ttk.Scale(edge_style_frame, from_=1, to=10, variable=self.edge_width,
+                 command=lambda _: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
+
+        # Edge Style
+        ttk.Label(edge_style_frame, text="Style:").pack(anchor=tk.W, padx=5)
+        style_menu = ttk.OptionMenu(edge_style_frame, self.edge_style, "solid",
+                                   "solid", "dashed", "dotted", "dashdot",
+                                   command=lambda _: self.redraw_graph())
+        style_menu.pack(fill=tk.X, padx=5, pady=2)
+
+        # Arrow Size (only for directed graphs)
+        self.arrow_size_frame = ttk.Frame(edge_style_frame)
+        ttk.Label(self.arrow_size_frame, text="Arrow Size:").pack(anchor=tk.W, padx=5)
+        ttk.Scale(self.arrow_size_frame, from_=5, to=30, variable=self.arrow_size,
+                 command=lambda _: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
+        self.arrow_size_frame.pack_forget()
+        
+        self.graph_type.trace_add('write', lambda *_: self.toggle_directed_options())
         
         # Community Detection Section
         comm_frame = ttk.LabelFrame(self.scrollable_frame, text="Community Detection", style='Header.TLabel')
@@ -256,6 +330,30 @@ class NetworkAnalysisGUI:
         y = (self.master.winfo_screenheight() // 2) - (height // 2)
         self.master.geometry(f'{width}x{height}+{x}+{y}')
 
+    def toggle_directed_options(self):
+        """Toggle visibility of directed graph options"""
+        if self.graph_type.get() == 'Directed Graph':
+            self.arrow_size_frame.pack(fill=tk.X, padx=5, pady=2)
+        else:
+            self.arrow_size_frame.pack_forget()
+        self.redraw_graph()
+
+    def pick_node_color(self):
+        """Open color picker for node color"""
+        color = colorchooser.askcolor(title="Choose Node Color")[1]
+        if color:
+            self.node_single_color.set(color)
+            self.node_color_preview.delete("all")
+            self.node_color_preview.create_rectangle(0, 0, 20, 20, fill=color, outline="")
+            self.redraw_graph()
+
+    def pick_edge_color(self):
+        """Open color picker for edge color"""
+        color = colorchooser.askcolor(title="Choose Edge Color")[1]
+        if color:
+            self.edge_single_color.set(color)
+            self.redraw_graph()
+
     def load_edge_file(self):
         """Load edge data from CSV file"""
         try:
@@ -264,6 +362,7 @@ class NetworkAnalysisGUI:
             if filepath:
                 self.edge_df = pd.read_csv(filepath)
                 self.log_message(f"Loaded edge file: {filepath}")
+                self.create_graph()
         except Exception as e:
             self.show_error("Error loading edge file", str(e))
 
@@ -275,6 +374,7 @@ class NetworkAnalysisGUI:
             if filepath:
                 self.node_df = pd.read_csv(filepath)
                 self.log_message(f"Loaded node file: {filepath}")
+                self.create_graph()
         except Exception as e:
             self.show_error("Error loading node file", str(e))
 
@@ -282,7 +382,7 @@ class NetworkAnalysisGUI:
         """Create a NetworkX graph from the loaded data"""
         try:
             if self.edge_df is None:
-                raise ValueError("No edge data loaded")
+                return False
             
             if self.graph_type.get() == 'Directed Graph':
                 self.G = nx.from_pandas_edgelist(self.edge_df, 
@@ -304,6 +404,7 @@ class NetworkAnalysisGUI:
                                 self.G.nodes[row['ID']][col] = row[col]
             
             self.log_message(f"Created {self.graph_type.get()} with {self.G.number_of_nodes()} nodes and {self.G.number_of_edges()} edges")
+            self.redraw_graph()
             return True
         except Exception as e:
             self.show_error("Error creating graph", str(e))
@@ -324,66 +425,170 @@ class NetworkAnalysisGUI:
             return nx.shell_layout(G)
         elif layout == "spectral":
             return nx.spectral_layout(G)
+        elif layout == "tree":
+            return self.tree_layout(G)
+        elif layout == "radial":
+            return self.radial_layout(G)
         else:
             return nx.spring_layout(G, seed=seed)
 
+    def tree_layout(self, G):
+        """Custom tree layout for hierarchical visualization"""
+        if len(G) == 0:
+            return {}
+        
+        # Choose a root (node with highest degree)
+        root = max(G.nodes(), key=lambda x: G.degree(x))
+        
+        # Compute levels using BFS
+        levels = {root: 0}
+        queue = [root]
+        while queue:
+            current = queue.pop(0)
+            for neighbor in G.neighbors(current):
+                if neighbor not in levels:
+                    levels[neighbor] = levels[current] + 1
+                    queue.append(neighbor)
+        
+        # Organize nodes by level
+        max_level = max(levels.values())
+        level_groups = {}
+        for node, level in levels.items():
+            if level not in level_groups:
+                level_groups[level] = []
+            level_groups[level].append(node)
+        
+        # Assign positions
+        pos = {}
+        for level in level_groups:
+            nodes = level_groups[level]
+            num_nodes = len(nodes)
+            y = max_level - level  # Top to bottom
+            x_positions = np.linspace(-num_nodes/2, num_nodes/2, num_nodes)
+            for i, node in enumerate(nodes):
+                pos[node] = (x_positions[i], y)
+        
+        return pos
+
+    def radial_layout(self, G):
+        """Custom radial layout for hierarchical visualization"""
+        if len(G) == 0:
+            return {}
+        
+        # Choose a root (node with highest degree)
+        root = max(G.nodes(), key=lambda x: G.degree(x))
+        
+        # Compute levels from root
+        levels = nx.single_source_shortest_path_length(G, root)
+        max_level = max(levels.values()) if levels else 1
+        
+        # Organize nodes by level
+        level_groups = {}
+        for node, level in levels.items():
+            if level not in level_groups:
+                level_groups[level] = []
+            level_groups[level].append(node)
+        
+        pos = {}
+        for level, nodes in level_groups.items():
+            num_nodes = len(nodes)
+            radius = level * 1.0  # Increase radius with level
+            if num_nodes == 0:
+                continue
+            angles = np.linspace(0, 2 * np.pi, num_nodes, endpoint=False)
+            for i, node in enumerate(nodes):
+                theta = angles[i]
+                x = radius * np.cos(theta)
+                y = radius * np.sin(theta)
+                pos[node] = (x, y)
+        
+        return pos
+
+    def redraw_graph(self):
+        """Redraw the graph with current styling settings"""
+        try:
+            if self.G is None:
+                return
+
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            pos = self.apply_layout(self.G)
+
+            # Node styling
+            node_size = [self.node_size.get() * (1 + self.G.degree(node)) / 10 for node in self.G.nodes()]
+            marker_map = {'circle': 'o', 'square': 's', 'triangle': '^', 'diamond': 'D'}
+            marker = marker_map.get(self.node_shape.get(), 'o')
+
+            nx.draw_networkx_nodes(
+                self.G, pos,
+                node_color=self.node_single_color.get(),
+                node_size=node_size,
+                node_shape=marker,
+                ax=ax
+            )
+
+            # Edge styling
+            edge_style = self.edge_style.get()
+            edge_width = self.edge_width.get()
+            
+            if self.graph_type.get() == 'Directed Graph':
+                nx.draw_networkx_edges(
+                    self.G, pos,
+                    edge_color=self.edge_single_color.get(),
+                    width=edge_width,
+                    style=edge_style,
+                    arrows=True,
+                    arrowsize=self.arrow_size.get(),
+                    ax=ax
+                )
+            else:
+                nx.draw_networkx_edges(
+                    self.G, pos,
+                    edge_color=self.edge_single_color.get(),
+                    width=edge_width,
+                    style=edge_style,
+                    ax=ax
+                )
+
+            # Node labels
+            if self.node_label_visible.get() and len(self.G.nodes()) <= 100:
+                nx.draw_networkx_labels(
+                    self.G, pos,
+                    font_size=self.node_label_size.get(),
+                    ax=ax
+                )
+
+            plt.title("Network Visualization", pad=20)
+            plt.axis('off')
+            self.canvas.draw()
+
+        except Exception as e:
+            self.show_error("Error redrawing graph", str(e))
+
     def run_community_detection(self):
-        """Run the selected community detection algorithm"""
+        """Run community detection and update visualization"""
         try:
             if not self.create_graph():
                 return
-                
+
             algorithm = self.selected_community.get()
             seed = self.random_seed.get()
             random.seed(seed)
-            
+
             if algorithm == "louvain":
                 partition = community_louvain.best_partition(self.G.to_undirected(), random_state=seed)
                 title = 'Louvain Community Detection'
             elif algorithm == "girvan_newman":
-                # Get first level of communities from Girvan-Newman
                 communities = next(girvan_newman(self.G.to_undirected()))
                 partition = {}
                 for i, comm in enumerate(communities):
                     for node in comm:
                         partition[node] = i
                 title = 'Girvan-Newman Community Detection'
-            else:
-                raise ValueError("Invalid community detection algorithm")
-            
-            pos = self.apply_layout(self.G)
-            
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            
-            # Draw nodes with community colors
-            cmap = plt.cm.tab20
-            node_colors = [partition[node] for node in self.G.nodes()]
-            node_sizes = [self.node_size.get() * (1 + self.G.degree(node)) / 10 for node in self.G.nodes()]
-            
-            nx.draw_networkx_nodes(self.G, pos, node_color=node_colors, 
-                                 node_size=node_sizes, cmap=cmap, ax=ax)
-            
-            # Draw edges
-            if self.graph_type.get() == 'Directed Graph':
-                nx.draw_networkx_edges(self.G, pos, arrows=True, ax=ax)
-            else:
-                nx.draw_networkx_edges(self.G, pos, ax=ax)
-            
-            # Draw labels for smaller graphs
-            if len(self.G.nodes()) <= 50:
-                nx.draw_networkx_labels(self.G, pos, font_size=8, ax=ax)
-            
-            plt.title(title, pad=20)
-            plt.colorbar(plt.cm.ScalarMappable(cmap=cmap), ax=ax, label="Community")
-            plt.axis('off')
-            
-            self.canvas.draw()
-            self.log_message(f"{algorithm} algorithm completed successfully")
-            
-            # Display community statistics
+
             self.show_community_stats(partition, title)
-            
+            self.log_message(f"{algorithm} algorithm completed successfully")
+
         except Exception as e:
             self.show_error("Error in community detection", str(e))
 
@@ -740,4 +945,4 @@ if __name__ == "__main__":
     except Exception as e:
         error_msg = f"Unhandled exception: {str(e)}\n{traceback.format_exc()}"
         messagebox.showerror("Critical Error", error_msg)
-        sys.exit(1)
+        sys.exit(1) 
