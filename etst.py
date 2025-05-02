@@ -1,116 +1,63 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, colorchooser
 import pandas as pd
 import networkx as nx
-import community as community_louvain
-import numpy as np
-from sklearn.metrics.cluster import normalized_mutual_info_score, adjusted_rand_score
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk, colorchooser
-from matplotlib.figure import Figure
+from community import best_partition
+from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
+import numpy as np
+from collections import defaultdict
+import math
 import traceback
 import sys
 import random
-from networkx.algorithms.community import girvan_newman
 
-class NetworkAnalysisGUI:
-    def __init__(self, master):
-        self.master = master
-        master.title("Advanced Network Analysis Tool")
-        master.configure(bg="#f0f0f0")
+class SocialNetworkAnalyzer:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Social Network Analysis Tool")
+        self.root.geometry("1400x900")
         
-        # Initialize variables
-        self.edge_df = None
-        self.node_df = None
+        # Data storage
         self.G = None
-        self.node_size = tk.IntVar(value=300)
-        self.random_seed = tk.IntVar(value=42)
-        self.selected_layout = tk.StringVar(value="spring")
-        self.selected_community = tk.StringVar(value="louvain")
+        self.original_graph = None
+        self.node_attributes = {}
+        self.edge_attributes = pd.DataFrame()
+        self.communities = {}
         
-        # Node styling variables
-        self.node_single_color = tk.StringVar(value="#4a6baf")
-        self.node_shape = tk.StringVar(value="circle")
-        self.node_label_visible = tk.BooleanVar(value=True)
-        self.node_label_size = tk.IntVar(value=8)
+        # Visualization settings
+        self.layout_pos = None
+        self.current_layout = "spring"
+        self.layout_seed = 42
+        self.node_size = 300
+        self.custom_color = "#1f78b4"
+        self.node_shape = "o"
+        self.edge_width = 1.0
+        self.edge_style = "solid"
+        self.arrow_size = 10
+        self.node_label_visible = True
+        self.node_label_size = 8
         
-        # Edge styling variables
-        self.edge_single_color = tk.StringVar(value="#666666")
-        self.edge_width = tk.IntVar(value=1)
-        self.edge_style = tk.StringVar(value="solid")
-        self.arrow_size = tk.IntVar(value=10)
+        # Initialize UI
+        self.setup_ui()
         
+    def setup_ui(self):
         # Configure styles
-        self.configure_styles()
+        self.style = ttk.Style()
+        self.style.configure('TFrame', background='#f0f0f0')
+        self.style.configure('TButton', font=('Arial', 10), padding=5)
+        self.style.configure('Header.TLabel', font=('Arial', 12, 'bold'))
         
-        # Create main frames
-        self.create_main_frames()
-        
-        # Create widgets
-        self.create_widgets()
-        
-        # Center the window
-        self.center_window()
-
-    def configure_styles(self):
-        """Configure custom styles for widgets"""
-        style = ttk.Style()
-        style.theme_use('clam')
-        
-        # Button styles
-        style.configure('Primary.TButton', 
-                      background='#4a6baf', 
-                      foreground='white',
-                      font=('Arial', 10, 'bold'),
-                      padding=5,
-                      borderwidth=2)
-        
-        style.configure('Secondary.TButton', 
-                      background='#6c757d', 
-                      foreground='white',
-                      font=('Arial', 10, 'bold'),
-                      padding=5,
-                      borderwidth=2)
-        
-        style.configure('Danger.TButton', 
-                      background='#dc3545', 
-                      foreground='white',
-                      font=('Arial', 10, 'bold'),
-                      padding=5,
-                      borderwidth=2)
-        
-        style.configure('Success.TButton', 
-                      background='#28a745', 
-                      foreground='white',
-                      font=('Arial', 10, 'bold'),
-                      padding=5,
-                      borderwidth=2)
-        
-        # Label styles
-        style.configure('Header.TLabel', 
-                      background='#343a40', 
-                      foreground='white',
-                      font=('Arial', 12, 'bold'),
-                      padding=5)
-        
-        # Entry styles
-        style.configure('TEntry', 
-                      font=('Arial', 10),
-                      padding=5)
-
-    def create_main_frames(self):
-        """Create the main frames for the GUI"""
-        # Main container frame
-        self.main_container = ttk.Frame(self.master)
-        self.main_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Left panel - Controls (now with scrollbar)
-        self.control_frame_container = ttk.Frame(self.main_container, width=300)
-        self.control_frame_container.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        # Main frames
+        self.control_frame_container = ttk.Frame(self.root)
+        self.control_frame_container.pack(side=tk.LEFT, fill=tk.Y)
         
         # Create canvas and scrollbar for control frame
         self.control_canvas = tk.Canvas(self.control_frame_container)
-        self.control_scrollbar = ttk.Scrollbar(self.control_frame_container, orient="vertical", command=self.control_canvas.yview)
+        self.control_scrollbar = ttk.Scrollbar(self.control_frame_container, 
+                                              orient="vertical", 
+                                              command=self.control_canvas.yview)
         self.scrollable_frame = ttk.Frame(self.control_canvas)
         
         self.scrollable_frame.bind(
@@ -126,586 +73,549 @@ class NetworkAnalysisGUI:
         self.control_canvas.pack(side="left", fill="both", expand=True)
         self.control_scrollbar.pack(side="right", fill="y")
         
-        # Right panel - Output and Visualization
-        self.right_panel = ttk.Frame(self.main_container)
-        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Control frame inside scrollable canvas
+        self.control_frame = ttk.Frame(self.scrollable_frame, width=300, padding=10)
+        self.control_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Visualization frame
-        self.visualization_frame = ttk.Frame(self.right_panel)
-        self.visualization_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Visualization canvas
+        self.figure = plt.figure(figsize=(10, 8), dpi=100)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self.root)
+        self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
         # Output frame
-        self.output_frame = ttk.Frame(self.right_panel)
-        self.output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-    def create_widgets(self):
-        """Create all widgets for the GUI"""
-        self.create_control_widgets()
-        self.create_output_widgets()
-        self.create_visualization_widgets()
-
-    def create_control_widgets(self):
-        """Create widgets in the control frame"""
-        # Data Loading Section
-        load_frame = ttk.LabelFrame(self.scrollable_frame, text="Data Loading", style='Header.TLabel')
-        load_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(load_frame, text="Load Edge CSV", style='Primary.TButton',
-                  command=self.load_edge_file).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(load_frame, text="Load Node CSV", style='Primary.TButton',
-                  command=self.load_node_file).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Graph Type Selection
-        self.graph_type = tk.StringVar(value='Undirected Graph')
-        graph_frame = ttk.LabelFrame(self.scrollable_frame, text="Graph Type", style='Header.TLabel')
-        graph_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Radiobutton(graph_frame, text="Undirected Graph", variable=self.graph_type,
-                       value='Undirected Graph').pack(anchor=tk.W, padx=5, pady=2)
-        
-        ttk.Radiobutton(graph_frame, text="Directed Graph", variable=self.graph_type,
-                       value='Directed Graph').pack(anchor=tk.W, padx=5, pady=2)
-        
-        # Visualization Settings
-        vis_frame = ttk.LabelFrame(self.scrollable_frame, text="Visualization Settings", style='Header.TLabel')
-        vis_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Node size control
-        ttk.Label(vis_frame, text="Node Size:").pack(anchor=tk.W, padx=5)
-        ttk.Scale(vis_frame, from_=10, to=1000, variable=self.node_size,
-                 command=lambda x: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Layout algorithm selection
-        ttk.Label(vis_frame, text="Layout Algorithm:").pack(anchor=tk.W, padx=5)
-        layout_menu = ttk.OptionMenu(vis_frame, self.selected_layout, "spring", 
-                                   "spring", "circular", "random", "shell", "spectral",
-                                   "tree", "radial",
-                                   command=lambda _: self.redraw_graph())
-        layout_menu.pack(fill=tk.X, padx=5, pady=2)
-        
-        # Random seed control
-        ttk.Label(vis_frame, text="Random Seed:").pack(anchor=tk.W, padx=5)
-        ttk.Entry(vis_frame, textvariable=self.random_seed).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Node Styling Section
-        node_style_frame = ttk.LabelFrame(self.scrollable_frame, text="Node Styling", style='Header.TLabel')
-        node_style_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Color Picker
-        self.node_color_picker_frame = ttk.Frame(node_style_frame)
-        ttk.Label(self.node_color_picker_frame, text="Node Color:").pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.node_color_picker_frame, text="Pick", 
-                  command=self.pick_node_color).pack(side=tk.LEFT, padx=5)
-        self.node_color_preview = tk.Canvas(self.node_color_picker_frame, width=20, height=20)
-        self.node_color_preview.create_rectangle(0, 0, 20, 20, fill=self.node_single_color.get(), outline="")
-        self.node_color_preview.pack(side=tk.LEFT)
-        self.node_color_picker_frame.pack(fill=tk.X, padx=5, pady=2)
-
-        # Node Shape
-        ttk.Label(node_style_frame, text="Shape:").pack(anchor=tk.W, padx=5)
-        shape_menu = ttk.OptionMenu(node_style_frame, self.node_shape, "circle", 
-                                  "circle", "square", "triangle", "diamond",
-                                  command=lambda _: self.redraw_graph())
-        shape_menu.pack(fill=tk.X, padx=5, pady=2)
-
-        # Node Labels
-        ttk.Checkbutton(node_style_frame, text="Show Labels", 
-                       variable=self.node_label_visible,
-                       command=self.redraw_graph).pack(anchor=tk.W, padx=5)
-        ttk.Label(node_style_frame, text="Label Size:").pack(anchor=tk.W, padx=5)
-        ttk.Scale(node_style_frame, from_=6, to=20, variable=self.node_label_size,
-                 command=lambda _: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Edge Styling Section
-        edge_style_frame = ttk.LabelFrame(self.scrollable_frame, text="Edge Styling", style='Header.TLabel')
-        edge_style_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Edge Color
-        ttk.Label(edge_style_frame, text="Color:").pack(anchor=tk.W, padx=5)
-        ttk.Button(edge_style_frame, text="Pick Edge Color", 
-                  command=self.pick_edge_color).pack(fill=tk.X, padx=5, pady=2)
-
-        # Edge Width
-        ttk.Label(edge_style_frame, text="Width:").pack(anchor=tk.W, padx=5)
-        ttk.Scale(edge_style_frame, from_=1, to=10, variable=self.edge_width,
-                 command=lambda _: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
-
-        # Edge Style
-        ttk.Label(edge_style_frame, text="Style:").pack(anchor=tk.W, padx=5)
-        style_menu = ttk.OptionMenu(edge_style_frame, self.edge_style, "solid",
-                                   "solid", "dashed", "dotted", "dashdot",
-                                   command=lambda _: self.redraw_graph())
-        style_menu.pack(fill=tk.X, padx=5, pady=2)
-
-        # Arrow Size (only for directed graphs)
-        self.arrow_size_frame = ttk.Frame(edge_style_frame)
-        ttk.Label(self.arrow_size_frame, text="Arrow Size:").pack(anchor=tk.W, padx=5)
-        ttk.Scale(self.arrow_size_frame, from_=5, to=30, variable=self.arrow_size,
-                 command=lambda _: self.redraw_graph()).pack(fill=tk.X, padx=5, pady=2)
-        self.arrow_size_frame.pack_forget()
-        
-        self.graph_type.trace_add('write', lambda *_: self.toggle_directed_options())
-        
-        # Community Detection Section
-        comm_frame = ttk.LabelFrame(self.scrollable_frame, text="Community Detection", style='Header.TLabel')
-        comm_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Community algorithm selection
-        ttk.Label(comm_frame, text="Algorithm:").pack(anchor=tk.W, padx=5)
-        comm_menu = ttk.OptionMenu(comm_frame, self.selected_community, "louvain", 
-                                  "louvain", "girvan_newman")
-        comm_menu.pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(comm_frame, text="Run Community Detection", style='Success.TButton',
-                  command=self.run_community_detection).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(comm_frame, text="Compare Algorithms", style='Primary.TButton',
-                  command=self.compare_community_algorithms).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Centrality Filters
-        filter_frame = ttk.LabelFrame(self.scrollable_frame, text="Centrality Filters", style='Header.TLabel')
-        filter_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.filter_threshold = tk.DoubleVar(value=0.0)
-        ttk.Entry(filter_frame, textvariable=self.filter_threshold).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(filter_frame, text="Filter by Degree", style='Secondary.TButton',
-                  command=lambda: self.filter_centrality('degree')).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(filter_frame, text="Filter by Betweenness", style='Secondary.TButton',
-                  command=lambda: self.filter_centrality('betweenness')).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(filter_frame, text="Filter by Closeness", style='Secondary.TButton',
-                  command=lambda: self.filter_centrality('closeness')).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(filter_frame, text="Run PageRank", style='Primary.TButton',
-                  command=lambda: self.run_pagerank()).pack(fill=tk.X, padx=5, pady=2)
-        
-        # New Clustering and Path Metrics Section
-        clustering_frame = ttk.LabelFrame(self.scrollable_frame, text="Clustering & Path Metrics", style='Header.TLabel')
-        clustering_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(clustering_frame, text="Show Clustering Coefficient", style='Primary.TButton',
-                  command=self.show_clustering_coefficient).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(clustering_frame, text="Show Average Clustering", style='Primary.TButton',
-                  command=self.show_average_clustering).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(clustering_frame, text="Show Average Path Length", style='Primary.TButton',
-                  command=self.show_average_path_length).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(clustering_frame, text="Show Harmonic Centrality", style='Primary.TButton',
-                  command=self.show_harmonic_centrality).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Metrics Section
-        metrics_frame = ttk.LabelFrame(self.scrollable_frame, text="Metrics", style='Header.TLabel')
-        metrics_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(metrics_frame, text="Show Degree Distribution", style='Primary.TButton',
-                  command=self.plot_degree_distribution).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(metrics_frame, text="Show Conductance", style='Primary.TButton',
-                  command=self.show_conductance).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(metrics_frame, text="Show Modularity", style='Primary.TButton',
-                  command=self.show_modularity).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(metrics_frame, text="Show NMI", style='Primary.TButton',
-                  command=self.show_nmi).pack(fill=tk.X, padx=5, pady=2)
-        
-        ttk.Button(metrics_frame, text="Show ARI", style='Primary.TButton',
-                  command=self.show_ari).pack(fill=tk.X, padx=5, pady=2)
-        
-        # Clear Button
-        ttk.Button(self.scrollable_frame, text="Clear All", style='Danger.TButton',
-                  command=self.clear_all).pack(fill=tk.X, padx=5, pady=10)
-
-    def create_output_widgets(self):
-        """Create widgets in the output frame"""
+        self.output_frame = ttk.Frame(self.root)
+        self.output_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
         self.output_text = tk.Text(self.output_frame, wrap=tk.WORD, font=('Consolas', 10))
-        self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.output_text.pack(fill=tk.BOTH, expand=True)
         
         scrollbar = ttk.Scrollbar(self.output_text)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.output_text.config(yscrollcommand=scrollbar.set)
         scrollbar.config(command=self.output_text.yview)
+        
+        # Build UI sections
+        self.setup_data_loading()
+        self.setup_visualization_controls()
+        self.setup_analysis_controls()
+        self.setup_filter_controls()
+        self.setup_metrics_controls()
+        
+    def setup_data_loading(self):
+        frame = ttk.LabelFrame(self.control_frame, text="Data Loading", padding=10)
+        frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(frame, text="Load Nodes CSV", command=self.load_nodes).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Load Edges CSV", command=self.load_edges).pack(fill=tk.X, pady=2)
+        
+        self.directed_var = tk.BooleanVar()
+        ttk.Checkbutton(frame, text="Directed Graph", variable=self.directed_var).pack(anchor=tk.W)
+        
+    def setup_visualization_controls(self):
+        frame = ttk.LabelFrame(self.control_frame, text="Visualization Settings", padding=10)
+        frame.pack(fill=tk.X, pady=5)
+        
+        # Layout selection
+        ttk.Label(frame, text="Layout:").pack(anchor=tk.W)
+        self.layout_var = tk.StringVar(value="spring")
+        ttk.Combobox(frame, textvariable=self.layout_var, 
+                     values=["spring", "circular", "kamada-kawai", "spectral", "shell", "tree", "radial"]).pack(fill=tk.X)
+        
+        # Node size control
+        ttk.Label(frame, text="Node Size:").pack(anchor=tk.W)
+        self.size_scale = ttk.Scale(frame, from_=10, to=1000, value=300)
+        self.size_scale.pack(fill=tk.X)
+        
+        # Color controls
+        ttk.Label(frame, text="Node Color:").pack(anchor=tk.W)
+        color_frame = ttk.Frame(frame)
+        color_frame.pack(fill=tk.X)
+        self.color_button = ttk.Button(color_frame, text="Choose Color", command=self.choose_node_color)
+        self.color_button.pack(side=tk.LEFT)
+        self.color_preview = tk.Canvas(color_frame, width=50, height=20, bg=self.custom_color)
+        self.color_preview.pack(side=tk.LEFT, padx=5)
+        
+        # Color mapping selection
+        self.color_var = tk.StringVar(value="manual")
+        ttk.Combobox(frame, textvariable=self.color_var, 
+                     values=["manual", "community", "degree", "betweenness", "pagerank"]).pack(fill=tk.X)
+        
+        # Shape controls
+        ttk.Label(frame, text="Node Shape:").pack(anchor=tk.W)
+        shape_frame = ttk.Frame(frame)
+        shape_frame.pack(fill=tk.X)
+        self.shape_var = tk.StringVar(value="o")
+        shapes = [("Circle", "o"), ("Square", "s"), ("Triangle", "^"), ("Diamond", "D")]
+        for text, shape in shapes:
+            ttk.Radiobutton(shape_frame, text=text, variable=self.shape_var, 
+                           value=shape).pack(side=tk.LEFT)
+        
+        # Edge styling
+        ttk.Label(frame, text="Edge Style:").pack(anchor=tk.W)
+        self.edge_style_var = tk.StringVar(value="solid")
+        ttk.Combobox(frame, textvariable=self.edge_style_var,
+                    values=["solid", "dashed", "dotted", "dashdot"]).pack(fill=tk.X)
+        
+        ttk.Label(frame, text="Edge Width:").pack(anchor=tk.W)
+        self.edge_width_scale = ttk.Scale(frame, from_=1, to=10, value=1)
+        self.edge_width_scale.pack(fill=tk.X)
+        
+        ttk.Button(frame, text="Update Visualization", command=self.update_visualization).pack(fill=tk.X, pady=5)
+        ttk.Button(frame, text="Reapply Layout", command=self.force_new_layout).pack(fill=tk.X)
+        
+    def setup_analysis_controls(self):
+        frame = ttk.LabelFrame(self.control_frame, text="Analysis Tools", padding=10)
+        frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(frame, text="Run Louvain Community Detection", 
+                  command=lambda: self.run_community_detection("louvain")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Run Girvan-Newman Community Detection", 
+                  command=lambda: self.run_community_detection("girvan")).pack(fill=tk.X, pady=2)
+        
+        ttk.Button(frame, text="Calculate PageRank", command=self.calculate_pagerank).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate Clustering Coefficients", command=self.calculate_clustering).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Degree Distribution", command=self.plot_degree_distribution).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Top 10 Degrees", command=self.show_top_degrees).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Top 10 Closeness", command=self.show_top_closeness).pack(fill=tk.X, pady=2)
+        
+    def setup_filter_controls(self):
+        frame = ttk.LabelFrame(self.control_frame, text="Centrality Filters", padding=10)
+        frame.pack(fill=tk.X, pady=5)
+        
+        self.filter_threshold = tk.DoubleVar(value=0.0)
+        ttk.Entry(frame, textvariable=self.filter_threshold).pack(fill=tk.X)
+        
+        ttk.Button(frame, text="Filter by Degree", 
+                  command=lambda: self.filter_centrality('degree')).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Filter by Betweenness", 
+                  command=lambda: self.filter_centrality('betweenness')).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Filter by Closeness", 
+                  command=lambda: self.filter_centrality('closeness')).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Filter by Harmonic", 
+                  command=lambda: self.filter_centrality('harmonic')).pack(fill=tk.X, pady=2)
+        
+    def setup_metrics_controls(self):
+        frame = ttk.LabelFrame(self.control_frame, text="Metrics", padding=10)
+        frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(frame, text="Show Conductance", command=self.show_conductance).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Modularity", command=self.show_modularity).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show NMI", command=self.show_nmi).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show ARI", command=self.show_ari).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Harmonic Centrality", command=self.show_harmonic_centrality).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Clear All", command=self.clear_all).pack(fill=tk.X, pady=5)
+        
+    def log_message(self, message):
+        """Add a message to the output log"""
+        self.output_text.insert(tk.END, f"[LOG] {message}\n")
+        self.output_text.see(tk.END)
 
-    def create_visualization_widgets(self):
-        """Create widgets in the visualization frame"""
-        self.figure = Figure(figsize=(8, 6), dpi=100)
-        self.canvas = FigureCanvasTkAgg(self.figure, master=self.visualization_frame)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-    def center_window(self):
-        """Center the window on the screen"""
-        self.master.update_idletasks()
-        width = self.master.winfo_width()
-        height = self.master.winfo_height()
-        x = (self.master.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.master.winfo_screenheight() // 2) - (height // 2)
-        self.master.geometry(f'{width}x{height}+{x}+{y}')
-
-    def toggle_directed_options(self):
-        """Toggle visibility of directed graph options"""
-        if self.graph_type.get() == 'Directed Graph':
-            self.arrow_size_frame.pack(fill=tk.X, padx=5, pady=2)
-        else:
-            self.arrow_size_frame.pack_forget()
-        self.redraw_graph()
-
-    def pick_node_color(self):
-        """Open color picker for node color"""
-        color = colorchooser.askcolor(title="Choose Node Color")[1]
-        if color:
-            self.node_single_color.set(color)
-            self.node_color_preview.delete("all")
-            self.node_color_preview.create_rectangle(0, 0, 20, 20, fill=color, outline="")
-            self.redraw_graph()
-
-    def pick_edge_color(self):
-        """Open color picker for edge color"""
-        color = colorchooser.askcolor(title="Choose Edge Color")[1]
-        if color:
-            self.edge_single_color.set(color)
-            self.redraw_graph()
-
-    def load_edge_file(self):
-        """Load edge data from CSV file"""
+    def show_error(self, title, message):
+        """Show an error message"""
+        error_msg = f"{title}:\n{message}"
+        self.log_message(error_msg)
+        messagebox.showerror(title, message)
+        
+    def choose_node_color(self):
+        color = colorchooser.askcolor(title="Choose Node Color", initialcolor=self.custom_color)
+        if color[1]:
+            self.custom_color = color[1]
+            self.color_preview.config(bg=self.custom_color)
+            self.update_visualization()
+        
+    def load_nodes(self):
+        file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
+        if not file_path:
+            return
+            
         try:
-            filepath = filedialog.askopenfilename(title="Select Edge CSV File", 
-                                                filetypes=[("CSV files", "*.csv")])
-            if filepath:
-                self.edge_df = pd.read_csv(filepath)
-                self.log_message(f"Loaded edge file: {filepath}")
-                self.create_graph()
+            df = pd.read_csv(file_path)
+            df.columns = df.columns.str.lower()
+            
+            if 'id' not in df.columns:
+                messagebox.showerror("Error", "Node CSV must contain an 'id' column")
+                return
+                
+            self.node_attributes = df.set_index('id').to_dict('index')
+            messagebox.showinfo("Success", f"Loaded {len(self.node_attributes)} node attributes")
+            self.layout_pos = None
+            
         except Exception as e:
-            self.show_error("Error loading edge file", str(e))
-
-    def load_node_file(self):
-        """Load node data from CSV file"""
+            messagebox.showerror("Error", f"Failed to load nodes: {str(e)}")
+    
+    def load_edges(self):
+        file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
+        if not file_path:
+            return
+            
         try:
-            filepath = filedialog.askopenfilename(title="Select Node CSV File", 
-                                                filetypes=[("CSV files", "*.csv")])
-            if filepath:
-                self.node_df = pd.read_csv(filepath)
-                self.log_message(f"Loaded node file: {filepath}")
-                self.create_graph()
+            self.edge_attributes = pd.read_csv(file_path)
+            self.edge_attributes.columns = self.edge_attributes.columns.str.lower()
+            
+            if not {'source', 'target'}.issubset(self.edge_attributes.columns):
+                messagebox.showerror("Error", "Edge CSV must contain 'source' and 'target' columns")
+                return
+                
+            self.create_graph()
+            self.update_visualization()
+            messagebox.showinfo("Success", f"Loaded {len(self.edge_attributes)} edges")
+            
         except Exception as e:
-            self.show_error("Error loading node file", str(e))
-
+            messagebox.showerror("Error", f"Failed to load edges: {str(e)}")
+    
     def create_graph(self):
-        """Create a NetworkX graph from the loaded data"""
         try:
-            if self.edge_df is None:
-                return False
+            self.G = nx.DiGraph() if self.directed_var.get() else nx.Graph()
             
-            if self.graph_type.get() == 'Directed Graph':
-                self.G = nx.from_pandas_edgelist(self.edge_df, 
-                                               source="Source", 
-                                               target="Target", 
-                                               create_using=nx.DiGraph())
-            else:
-                self.G = nx.from_pandas_edgelist(self.edge_df, 
-                                               source="Source", 
-                                               target="Target", 
-                                               create_using=nx.Graph())
+            for node, attrs in self.node_attributes.items():
+                self.G.add_node(node, **attrs)
+                
+            for _, row in self.edge_attributes.iterrows():
+                edge_attrs = row.drop(['source', 'target']).to_dict()
+                self.G.add_edge(row['source'], row['target'], **edge_attrs)
+                
+            self.original_graph = self.G.copy()
+            self.layout_pos = None
             
-            # Add node attributes if available
-            if self.node_df is not None:
-                for _, row in self.node_df.iterrows():
-                    if row['ID'] in self.G.nodes():
-                        for col in self.node_df.columns:
-                            if col != 'ID':
-                                self.G.nodes[row['ID']][col] = row[col]
-            
-            self.log_message(f"Created {self.graph_type.get()} with {self.G.number_of_nodes()} nodes and {self.G.number_of_edges()} edges")
-            self.redraw_graph()
-            return True
         except Exception as e:
-            self.show_error("Error creating graph", str(e))
-            return False
-
-    def apply_layout(self, G):
-        """Apply the selected layout algorithm to the graph"""
-        layout = self.selected_layout.get()
-        seed = self.random_seed.get()
+            messagebox.showerror("Error", f"Graph creation failed: {str(e)}")
+            self.G = None
+    
+    def update_visualization(self):
+        if self.G is None or len(self.G.nodes()) == 0:
+            return
+            
+        self.figure.clf()
+        ax = self.figure.add_subplot(111)
         
-        if layout == "spring":
-            return nx.spring_layout(G, seed=seed)
-        elif layout == "circular":
-            return nx.circular_layout(G)
-        elif layout == "random":
-            return nx.random_layout(G, seed=seed)
-        elif layout == "shell":
-            return nx.shell_layout(G)
-        elif layout == "spectral":
-            return nx.spectral_layout(G)
-        elif layout == "tree":
-            return self.tree_layout(G)
-        elif layout == "radial":
-            return self.radial_layout(G)
+        if self.layout_pos is None or self.current_layout != self.layout_var.get():
+            self.current_layout = self.layout_var.get()
+            self.layout_pos = self.calculate_layout()
+            
+        node_colors = self.get_node_colors()
+        
+        nx.draw_networkx_nodes(
+            self.G, self.layout_pos, ax=ax,
+            node_size=float(self.size_scale.get()),
+            node_color=node_colors,
+            cmap=plt.cm.tab20 if self.color_var.get() != "manual" else None,
+            node_shape=self.shape_var.get()
+        )
+        
+        edge_style = self.edge_style_var.get()
+        edge_width = float(self.edge_width_scale.get())
+        
+        if self.directed_var.get():
+            nx.draw_networkx_edges(
+                self.G, self.layout_pos, ax=ax, 
+                width=edge_width,
+                style=edge_style,
+                arrows=True,
+                arrowsize=10
+            )
         else:
-            return nx.spring_layout(G, seed=seed)
-
-    def tree_layout(self, G):
-        """Custom tree layout for hierarchical visualization"""
-        if len(G) == 0:
+            nx.draw_networkx_edges(
+                self.G, self.layout_pos, ax=ax, 
+                width=edge_width,
+                style=edge_style
+            )
+        
+        if len(self.G.nodes()) <= 50:
+            nx.draw_networkx_labels(self.G, self.layout_pos, ax=ax, font_size=8)
+        
+        self.canvas.draw()
+    
+    def get_node_colors(self):
+        color_by = self.color_var.get()
+        
+        if color_by == "manual":
+            return self.custom_color
+        elif color_by == "community":
+            if not self.communities:
+                return self.custom_color
+            return [self.communities.get(node, 0) for node in self.G.nodes()]
+        elif color_by == "degree":
+            degrees = dict(self.G.degree())
+            return [degrees[node] for node in self.G.nodes()]
+        elif color_by == "betweenness":
+            betweenness = nx.betweenness_centrality(self.G)
+            return [betweenness[node] for node in self.G.nodes()]
+        elif color_by == "pagerank":
+            pagerank = nx.pagerank(self.G)
+            return [pagerank[node] for node in self.G.nodes()]
+        else:
+            return self.custom_color
+    
+    def calculate_layout(self):
+        layout = self.layout_var.get()
+        
+        try:
+            if layout == "spring":
+                return nx.spring_layout(self.G, seed=self.layout_seed)
+            elif layout == "circular":
+                return nx.circular_layout(self.G)
+            elif layout == "kamada-kawai":
+                return nx.kamada_kawai_layout(self.G)
+            elif layout == "spectral":
+                return nx.spectral_layout(self.G)
+            elif layout == "shell":
+                return nx.shell_layout(self.G)
+            elif layout == "tree":
+                return self.tree_layout()
+            elif layout == "radial":
+                return self.radial_layout()
+            else:
+                return nx.spring_layout(self.G, seed=self.layout_seed)
+        except Exception as e:
+            messagebox.showerror("Layout Error", str(e))
+            return nx.spring_layout(self.G, seed=self.layout_seed)
+    
+    def tree_layout(self):
+        """Hierarchical tree layout using BFS levels"""
+        if len(self.G.nodes()) == 0:
             return {}
-        
-        # Choose a root (node with highest degree)
-        root = max(G.nodes(), key=lambda x: G.degree(x))
-        
-        # Compute levels using BFS
+            
+        root = max(self.G.degree(), key=lambda x: x[1])[0]
         levels = {root: 0}
         queue = [root]
+        
         while queue:
             current = queue.pop(0)
-            for neighbor in G.neighbors(current):
+            for neighbor in self.G.neighbors(current):
                 if neighbor not in levels:
                     levels[neighbor] = levels[current] + 1
                     queue.append(neighbor)
         
-        # Organize nodes by level
         max_level = max(levels.values())
-        level_groups = {}
-        for node, level in levels.items():
-            if level not in level_groups:
-                level_groups[level] = []
-            level_groups[level].append(node)
-        
-        # Assign positions
         pos = {}
-        for level in level_groups:
-            nodes = level_groups[level]
-            num_nodes = len(nodes)
-            y = max_level - level  # Top to bottom
-            x_positions = np.linspace(-num_nodes/2, num_nodes/2, num_nodes)
-            for i, node in enumerate(nodes):
-                pos[node] = (x_positions[i], y)
+        for node, level in levels.items():
+            y = max_level - level
+            x = len([n for n in levels if levels[n] == level and n <= node])
+            pos[node] = (x - 0.5 * (len(levels) ** 0.5), y)
         
         return pos
-
-    def radial_layout(self, G):
-        """Custom radial layout for hierarchical visualization"""
-        if len(G) == 0:
+    
+    def radial_layout(self):
+        """Radial layout with root at center"""
+        if len(self.G.nodes()) == 0:
             return {}
-        
-        # Choose a root (node with highest degree)
-        root = max(G.nodes(), key=lambda x: G.degree(x))
-        
-        # Compute levels from root
-        levels = nx.single_source_shortest_path_length(G, root)
+            
+        root = max(self.G.degree(), key=lambda x: x[1])[0]
+        levels = nx.single_source_shortest_path_length(self.G, root)
         max_level = max(levels.values()) if levels else 1
         
-        # Organize nodes by level
-        level_groups = {}
-        for node, level in levels.items():
-            if level not in level_groups:
-                level_groups[level] = []
-            level_groups[level].append(node)
-        
         pos = {}
-        for level, nodes in level_groups.items():
-            num_nodes = len(nodes)
-            radius = level * 1.0  # Increase radius with level
-            if num_nodes == 0:
-                continue
-            angles = np.linspace(0, 2 * np.pi, num_nodes, endpoint=False)
-            for i, node in enumerate(nodes):
-                theta = angles[i]
-                x = radius * np.cos(theta)
-                y = radius * np.sin(theta)
-                pos[node] = (x, y)
+        for node, level in levels.items():
+            angle = (node.__hash__() % 628) / 100  # Random angle between 0-6.28
+            radius = level / max_level
+            pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
         
         return pos
-
-    def redraw_graph(self):
-        """Redraw the graph with current styling settings"""
-        try:
-            if self.G is None:
-                return
-
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            pos = self.apply_layout(self.G)
-
-            # Node styling
-            node_size = [self.node_size.get() * (1 + self.G.degree(node)) / 10 for node in self.G.nodes()]
-            marker_map = {'circle': 'o', 'square': 's', 'triangle': '^', 'diamond': 'D'}
-            marker = marker_map.get(self.node_shape.get(), 'o')
-
-            nx.draw_networkx_nodes(
-                self.G, pos,
-                node_color=self.node_single_color.get(),
-                node_size=node_size,
-                node_shape=marker,
-                ax=ax
-            )
-
-            # Edge styling
-            edge_style = self.edge_style.get()
-            edge_width = self.edge_width.get()
+    
+    def force_new_layout(self):
+        self.layout_pos = None
+        self.update_visualization()
+    
+    def run_community_detection(self, method):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
             
-            if self.graph_type.get() == 'Directed Graph':
-                nx.draw_networkx_edges(
-                    self.G, pos,
-                    edge_color=self.edge_single_color.get(),
-                    width=edge_width,
-                    style=edge_style,
-                    arrows=True,
-                    arrowsize=self.arrow_size.get(),
-                    ax=ax
-                )
-            else:
-                nx.draw_networkx_edges(
-                    self.G, pos,
-                    edge_color=self.edge_single_color.get(),
-                    width=edge_width,
-                    style=edge_style,
-                    ax=ax
-                )
-
-            # Node labels
-            if self.node_label_visible.get() and len(self.G.nodes()) <= 100:
-                nx.draw_networkx_labels(
-                    self.G, pos,
-                    font_size=self.node_label_size.get(),
-                    ax=ax
-                )
-
-            plt.title("Network Visualization", pad=20)
-            plt.axis('off')
-            self.canvas.draw()
-
+        try:
+            if method == "louvain":
+                partition = best_partition(self.G.to_undirected())
+                self.communities = partition
+                message = "Louvain communities detected"
+            elif method == "girvan":
+                communities = nx.community.girvan_newman(self.G.to_undirected())
+                self.communities = {node: i for i, comm in enumerate(next(communities)) for node in comm}
+                message = "Girvan-Newman communities detected"
+            
+            self.color_var.set("community")
+            self.show_community_metrics()
+            self.update_visualization()
+            messagebox.showinfo("Success", message)
+            
         except Exception as e:
-            self.show_error("Error redrawing graph", str(e))
-
-    def run_community_detection(self):
-        """Run community detection and update visualization"""
+            messagebox.showerror("Error", f"Community detection failed: {str(e)}")
+    
+    def show_community_metrics(self):
+        if not self.communities:
+            messagebox.showerror("Error", "Run community detection first")
+            return
+            
+        metrics = []
+        communities = defaultdict(list)
+        for node, comm_id in self.communities.items():
+            communities[comm_id].append(node)
+        
+        # Convert to list of sets for modularity calculation
+        community_sets = [set(nodes) for nodes in communities.values()]
+        
+        metrics.append(f"Number of communities: {len(communities)}")
         try:
-            if not self.create_graph():
-                return
-
-            algorithm = self.selected_community.get()
-            seed = self.random_seed.get()
-            random.seed(seed)
-
-            if algorithm == "louvain":
-                partition = community_louvain.best_partition(self.G.to_undirected(), random_state=seed)
-                title = 'Louvain Community Detection'
-            elif algorithm == "girvan_newman":
-                communities = next(girvan_newman(self.G.to_undirected()))
-                partition = {}
-                for i, comm in enumerate(communities):
-                    for node in comm:
-                        partition[node] = i
-                title = 'Girvan-Newman Community Detection'
-
-            self.show_community_stats(partition, title)
-            self.log_message(f"{algorithm} algorithm completed successfully")
-
+            mod = nx.community.modularity(self.G, community_sets)
+            metrics.append(f"Modularity: {mod:.3f}")
         except Exception as e:
-            self.show_error("Error in community detection", str(e))
-
-    def show_community_stats(self, partition, title):
-        """Display community statistics in the output panel"""
-        communities = {}
-        for node, community in partition.items():
-            if community not in communities:
-                communities[community] = []
-            communities[community].append(node)
+            metrics.append(f"Modularity calculation failed: {str(e)}")
         
-        self.output_text.delete(1.0, tk.END)
-        self.output_text.insert(tk.END, f"{title} Results\n\n")
-        self.output_text.insert(tk.END, f"Number of communities: {len(communities)}\n\n")
-        
-        for comm, nodes in communities.items():
-            self.output_text.insert(tk.END, f"Community {comm}: {len(nodes)} nodes\n")
-        
-        # Calculate modularity
-        mod = community_louvain.modularity(partition, self.G)
-        self.output_text.insert(tk.END, f"\nModularity: {mod:.4f}\n")
-
-    def compare_community_algorithms(self):
-        """Compare different community detection algorithms"""
-        try:
-            if not self.create_graph():
-                return
-                
-            seed = self.random_seed.get()
-            random.seed(seed)
-            
-            # Run Louvain
-            louvain_partition = community_louvain.best_partition(self.G.to_undirected(), random_state=seed)
-            louvain_mod = community_louvain.modularity(louvain_partition, self.G)
-            
-            # Run Girvan-Newman (first level)
-            gn_communities = next(girvan_newman(self.G.to_undirected()))
-            gn_partition = {}
-            for i, comm in enumerate(gn_communities):
-                for node in comm:
-                    gn_partition[node] = i
-            gn_mod = community_louvain.modularity(gn_partition, self.G)
-            
-            # Calculate NMI if ground truth available
-            nmi = None
-            if self.node_df is not None and 'Class' in self.node_df.columns:
-                ground_truth = dict(zip(self.node_df['ID'], self.node_df['Class']))
-                louvain_truth = [louvain_partition[node] for node in self.G.nodes()]
-                gn_truth = [gn_partition.get(node, -1) for node in self.G.nodes()]
+        if hasattr(self, 'node_attributes') and 'class' in next(iter(self.node_attributes.values()), {}):
+            try:
+                ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
+                detected = [self.communities[node] for node in self.G.nodes()]
                 truth = [ground_truth[node] for node in self.G.nodes()]
-                nmi_louvain = normalized_mutual_info_score(truth, louvain_truth)
-                nmi_gn = normalized_mutual_info_score(truth, gn_truth)
-                nmi = (nmi_louvain, nmi_gn)
-            
-            # Display results
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, "Community Detection Algorithm Comparison\n\n")
-            self.output_text.insert(tk.END, f"Louvain Algorithm:\n")
-            self.output_text.insert(tk.END, f"- Number of communities: {len(set(louvain_partition.values()))}\n")
-            self.output_text.insert(tk.END, f"- Modularity: {louvain_mod:.4f}\n")
-            if nmi:
-                self.output_text.insert(tk.END, f"- NMI with ground truth: {nmi[0]:.4f}\n")
-            
-            self.output_text.insert(tk.END, f"\nGirvan-Newman Algorithm:\n")
-            self.output_text.insert(tk.END, f"- Number of communities: {len(gn_communities)}\n")
-            self.output_text.insert(tk.END, f"- Modularity: {gn_mod:.4f}\n")
-            if nmi:
-                self.output_text.insert(tk.END, f"- NMI with ground truth: {nmi[1]:.4f}\n")
-            
-            self.log_message("Community detection algorithms compared")
-            
-        except Exception as e:
-            self.show_error("Error comparing algorithms", str(e))
-
-    def plot_degree_distribution(self):
-        """Plot the degree distribution of the graph"""
+                nmi = normalized_mutual_info_score(truth, detected)
+                metrics.append(f"Normalized Mutual Information: {nmi:.3f}")
+            except Exception as e:
+                metrics.append(f"NMI calculation failed: {str(e)}")
+        
         try:
-            if not self.create_graph():
-                return
-                
-            degrees = [d for n, d in self.G.degree()]
+            conductances = []
+            for comm in community_sets:
+                if len(comm) == 0:
+                    continue
+                cut = nx.cut_size(self.G, comm)
+                volume = nx.volume(self.G, comm)
+                total = self.G.number_of_edges() * 2  # Since each edge is counted twice
+                conductance = cut / min(volume, total - volume) if min(volume, total - volume) != 0 else 0
+                conductances.append(conductance)
+            metrics.append(f"Average Conductance: {np.mean(conductances):.3f}")
+        except Exception as e:
+            metrics.append(f"Conductance calculation failed: {str(e)}")
+        
+        messagebox.showinfo("Community Metrics", "\n".join(metrics))
+    
+    def calculate_pagerank(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
             
-            self.figure.clear()
+        try:
+            pagerank = nx.pagerank(self.G)
+            top_nodes = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:10]
+            result = "PageRank Top 10:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
+            messagebox.showinfo("PageRank Results", result)
+        except Exception as e:
+            messagebox.showerror("Error", f"PageRank calculation failed: {str(e)}")
+    
+    def calculate_betweenness(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            betweenness = nx.betweenness_centrality(self.G)
+            top_nodes = sorted(betweenness.items(), key=lambda x: x[1], reverse=True)[:10]
+            result = "Betweenness Centrality Top 10:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
+            messagebox.showinfo("Betweenness Results", result)
+        except Exception as e:
+            messagebox.showerror("Error", f"Betweenness calculation failed: {str(e)}")
+    
+    def calculate_clustering(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            clustering = nx.clustering(self.G)
+            avg_clustering = nx.average_clustering(self.G)
+            result = f"Average Clustering Coefficient: {avg_clustering:.3f}\n\n"
+            result += "Top 10 Nodes by Clustering:\n"
+            top_nodes = sorted(clustering.items(), key=lambda x: x[1], reverse=True)[:10]
+            result += "\n".join([f"{node}: {score:.3f}" for node, score in top_nodes])
+            messagebox.showinfo("Clustering Results", result)
+        except Exception as e:
+            messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
+    
+    def plot_degree_distribution(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            degrees = [d for _, d in self.G.degree()]
+            self.figure.clf()
             ax = self.figure.add_subplot(111)
             
             ax.hist(degrees, bins=20, color='skyblue', edgecolor='black')
-            ax.set_title('Degree Distribution')
-            ax.set_xlabel('Degree')
-            ax.set_ylabel('Frequency')
-            ax.grid(True)
+            ax.set_title("Degree Distribution")
+            ax.set_xlabel("Degree")
+            ax.set_ylabel("Count")
             
             self.canvas.draw()
-            self.log_message("Degree distribution plotted")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to plot degree distribution: {str(e)}")
+    
+    def calculate_path_length(self):
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            if nx.is_connected(self.G):
+                avg_path = nx.average_shortest_path_length(self.G)
+                messagebox.showinfo("Path Length", f"Average Shortest Path Length: {avg_path:.3f}")
+            else:
+                messagebox.showinfo("Path Length", "Graph is not connected - showing largest component")
+                largest_cc = max(nx.connected_components(self.G.to_undirected()), key=len)
+                subgraph = self.G.subgraph(largest_cc)
+                avg_path = nx.average_shortest_path_length(subgraph)
+                messagebox.showinfo("Path Length", f"Average Path in Largest Component: {avg_path:.3f}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Path length calculation failed: {str(e)}")
+    
+    def show_top_degrees(self):
+        """Display top 10 nodes by degree centrality"""
+        try:
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
+                return
+
+            degrees = dict(self.G.degree())
+            sorted_degrees = sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            result = "Top 10 Nodes by Degree:\n"
+            result += "\n".join([f"{node}: {degree}" for node, degree in sorted_degrees])
+            
+            # Display in output text
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, result)
+            
+            messagebox.showinfo("Top Degrees", result)
+            self.log_message("Displayed top 10 degrees")
             
         except Exception as e:
-            self.show_error("Error plotting degree distribution", str(e))
+            self.show_error("Error showing degrees", str(e))
+
+    def show_top_closeness(self):
+        """Display top 10 nodes by closeness centrality"""
+        try:
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
+                return
+
+            closeness = nx.closeness_centrality(self.G)
+            sorted_closeness = sorted(closeness.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            result = "Top 10 Nodes by Closeness Centrality:\n"
+            result += "\n".join([f"{node}: {score:.4f}" for node, score in sorted_closeness])
+            
+            # Display in output text
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, result)
+            
+            messagebox.showinfo("Top Closeness", result)
+            self.log_message("Displayed top 10 closeness centrality")
+            
+        except Exception as e:
+            self.show_error("Error showing closeness", str(e))
 
     def filter_centrality(self, centrality_type):
         """Filter nodes based on centrality measure"""
         try:
-            if not self.create_graph():
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
                 return
                 
             threshold = self.filter_threshold.get()
@@ -722,25 +632,40 @@ class NetworkAnalysisGUI:
                 centrality = nx.closeness_centrality(self.G)
                 title = f"Nodes with Closeness Centrality ≥ {threshold}"
                 color = '#dc3545'
+            elif centrality_type == 'harmonic':
+                centrality = nx.harmonic_centrality(self.G)
+                title = f"Nodes with Harmonic Centrality ≥ {threshold}"
+                color = '#800080'
             else:
                 raise ValueError("Invalid centrality type")
             
             filtered_nodes = [n for n in self.G.nodes() if centrality[n] >= threshold]
             filtered_G = self.G.subgraph(filtered_nodes)
             
-            self.figure.clear()
+            self.figure.clf()
             ax = self.figure.add_subplot(111)
             
-            pos = self.apply_layout(filtered_G)
-            node_sizes = [self.node_size.get() * (1 + self.G.degree(n)) / 10 for n in filtered_nodes]
+            pos = self.calculate_layout()
+            node_sizes = [float(self.size_scale.get()) * (1 + self.G.degree(n)) / 10 for n in filtered_nodes]
             
-            nx.draw_networkx_nodes(filtered_G, pos, node_color=color, 
-                                 node_size=node_sizes, ax=ax)
+            nx.draw_networkx_nodes(
+                filtered_G, pos,
+                node_color=color,
+                node_size=node_sizes,
+                ax=ax
+            )
             
-            if self.graph_type.get() == 'Directed Graph':
-                nx.draw_networkx_edges(filtered_G, pos, arrows=True, ax=ax)
+            if self.directed_var.get():
+                nx.draw_networkx_edges(
+                    filtered_G, pos,
+                    arrows=True,
+                    ax=ax
+                )
             else:
-                nx.draw_networkx_edges(filtered_G, pos, ax=ax)
+                nx.draw_networkx_edges(
+                    filtered_G, pos,
+                    ax=ax
+                )
             
             if len(filtered_nodes) <= 50:
                 nx.draw_networkx_labels(filtered_G, pos, font_size=8, ax=ax)
@@ -761,259 +686,155 @@ class NetworkAnalysisGUI:
         except Exception as e:
             self.show_error("Error in centrality filtering", str(e))
 
-    def run_pagerank(self):
-        """Run PageRank algorithm and display results"""
-        try:
-            if not self.create_graph():
-                return
-                
-            pr = nx.pagerank(self.G)
-            
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            
-            pos = self.apply_layout(self.G)
-            node_sizes = [self.node_size.get() * (1 + pr[node] * 100) for node in self.G.nodes()]
-            
-            nx.draw_networkx_nodes(self.G, pos, node_color='#6f42c1', 
-                                 node_size=node_sizes, ax=ax)
-            
-            if self.graph_type.get() == 'Directed Graph':
-                nx.draw_networkx_edges(self.G, pos, arrows=True, ax=ax)
-            else:
-                nx.draw_networkx_edges(self.G, pos, ax=ax)
-            
-            if len(self.G.nodes()) <= 50:
-                nx.draw_networkx_labels(self.G, pos, font_size=8, ax=ax)
-            
-            plt.title('PageRank Results', pad=20)
-            plt.axis('off')
-            
-            self.canvas.draw()
-            
-            # Display PageRank values in output
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, "PageRank Results (Top 20 Nodes)\n\n")
-            for node in sorted(pr.keys(), key=lambda x: pr[x], reverse=True)[:20]:
-                self.output_text.insert(tk.END, f"Node {node}: {pr[node]:.4f}\n")
-            
-            self.log_message("PageRank algorithm completed")
-            
-        except Exception as e:
-            self.show_error("Error running PageRank", str(e))
-
     def show_conductance(self):
         """Calculate and display conductance values"""
         try:
-            if not self.create_graph():
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
                 return
                 
-            partition = community_louvain.best_partition(self.G.to_undirected())
-            conductance_values = self.calculate_conductance(self.G, partition)
+            if not self.communities:
+                messagebox.showerror("Error", "Run community detection first")
+                return
+                
+            communities = defaultdict(list)
+            for node, comm_id in self.communities.items():
+                communities[comm_id].append(node)
+            
+            community_sets = [set(nodes) for nodes in communities.values()]
+            
+            conductances = []
+            conductance_details = []
+            for i, comm in enumerate(community_sets):
+                if len(comm) == 0:
+                    continue
+                cut = nx.cut_size(self.G, comm)
+                volume = nx.volume(self.G, comm)
+                total = self.G.number_of_edges() * 2
+                conductance = cut / min(volume, total - volume) if min(volume, total - volume) != 0 else 0
+                conductances.append(conductance)
+                conductance_details.append(f"Community {i}: {conductance:.4f}")
+            
+            avg_conductance = np.mean(conductances)
+            message = "Conductance Values:\n\n" + "\n".join(conductance_details)
+            message += f"\n\nAverage Conductance: {avg_conductance:.4f}"
             
             self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, "Community Conductance Values:\n\n")
-            
-            for community, conductance in conductance_values.items():
-                self.output_text.insert(tk.END, f"{community}: {conductance:.4f}\n")
-            
-            avg_conductance = sum(conductance_values.values()) / len(conductance_values)
-            self.output_text.insert(tk.END, f"\nAverage Conductance: {avg_conductance:.4f}")
-            
+            self.output_text.insert(tk.END, message)
+            messagebox.showinfo("Conductance Results", message)
             self.log_message("Conductance values calculated")
             
         except Exception as e:
             self.show_error("Error calculating conductance", str(e))
 
-    def calculate_conductance(self, G, partition):
-        """Calculate conductance for each community"""
-        communities = {}
-        for node, community in partition.items():
-            if community not in communities:
-                communities[community] = []
-            communities[community].append(node)
-        
-        conductance_values = {}
-        for community, nodes in communities.items():
-            Eoc = 0  # Edges from community to outside
-            Ec = 0   # Edges within community
-            
-            for node in nodes:
-                for neighbor in G.neighbors(node):
-                    if neighbor in nodes:
-                        Ec += 1
-                    else:
-                        Eoc += 1
-            
-            # Each edge is counted twice (once for each node)
-            Ec = Ec // 2
-            Eoc = Eoc // 2
-            
-            if Ec == 0:
-                conductance = 1.0
-            else:
-                conductance = Eoc / (2 * Ec + Eoc)
-            
-            conductance_values[f"Community {community}"] = conductance
-        
-        return conductance_values
-
     def show_modularity(self):
         """Calculate and display modularity"""
         try:
-            if not self.create_graph():
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
                 return
                 
-            partition = community_louvain.best_partition(self.G.to_undirected())
-            communities = {}
-            for node, community in partition.items():
-                if community not in communities:
-                    communities[community] = []
-                communities[community].append(node)
+            if not self.communities:
+                messagebox.showerror("Error", "Run community detection first")
+                return
+                
+            communities = defaultdict(list)
+            for node, comm_id in self.communities.items():
+                communities[comm_id].append(node)
             
-            mod = community_louvain.modularity(self.G, communities.values())
+            community_sets = [set(nodes) for nodes in communities.values()]
+            
+            mod = nx.community.modularity(self.G, community_sets)
+            message = f"Modularity: {mod:.4f}\nNumber of communities: {len(communities)}"
             
             self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, f"Modularity: {mod:.4f}\n\n")
-            self.output_text.insert(tk.END, f"Number of communities: {len(communities)}")
-            
+            self.output_text.insert(tk.END, message)
+            messagebox.showinfo("Modularity Results", message)
             self.log_message(f"Modularity calculated: {mod:.4f}")
             
         except Exception as e:
             self.show_error("Error calculating modularity", str(e))
 
     def show_nmi(self):
-        """Calculate and display Normalized Mutual Information"""
         try:
-            if not self.create_graph() or self.node_df is None or 'Class' not in self.node_df.columns:
+            if self.G is None or not self.node_attributes or 'class' not in next(iter(self.node_attributes.values()), {}):
                 raise ValueError("Node data with ground truth classes is required")
-                
-            partition = community_louvain.best_partition(self.G.to_undirected())
-            ground_truth = dict(zip(self.node_df['ID'], self.node_df['Class']))
             
-            # Align the partitions
-            detected = [partition[node] for node in self.G.nodes()]
+            if not self.communities:
+                messagebox.showerror("Error", "Run community detection first")
+                return
+
+            ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
             truth = [ground_truth[node] for node in self.G.nodes()]
-            
+
+            # Handle communities as either dict or list of sets/lists
+            if isinstance(self.communities, dict):
+                detected = [self.communities[node] for node in self.G.nodes()]
+            elif isinstance(self.communities, (list, tuple)):
+                node_to_community = {}
+                for i, community in enumerate(self.communities):
+                    for node in community:
+                        node_to_community[node] = i
+                detected = [node_to_community[node] for node in self.G.nodes()]
+            else:
+                raise ValueError("Unrecognized format for communities")
+
             nmi = normalized_mutual_info_score(truth, detected)
-            
+            message = f"Normalized Mutual Information (NMI): {nmi:.4f}"
+
             self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, f"Normalized Mutual Information (NMI): {nmi:.4f}")
-            
+            self.output_text.insert(tk.END, message)
+            messagebox.showinfo("NMI Results", message)
             self.log_message(f"NMI calculated: {nmi:.4f}")
-            
+
         except Exception as e:
             self.show_error("Error calculating NMI", str(e))
 
     def show_ari(self):
         """Calculate and display Adjusted Rand Index"""
         try:
-            if not self.create_graph() or self.node_df is None or 'Class' not in self.node_df.columns:
+            if self.G is None or not self.node_attributes or 'class' not in next(iter(self.node_attributes.values()), {}):
                 raise ValueError("Node data with ground truth classes is required")
                 
-            partition = community_louvain.best_partition(self.G.to_undirected())
-            ground_truth = dict(zip(self.node_df['ID'], self.node_df['Class']))
-            
-            # Align the partitions
-            detected = [partition[node] for node in self.G.nodes()]
+            if not self.communities:
+                messagebox.showerror("Error", "Run community detection first")
+                return
+                
+            ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
+            detected = [self.communities[node] for node in self.G.nodes()]
             truth = [ground_truth[node] for node in self.G.nodes()]
             
             ari = adjusted_rand_score(truth, detected)
+            message = f"Adjusted Rand Index (ARI): {ari:.4f}"
             
             self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, f"Adjusted Rand Index (ARI): {ari:.4f}")
-            
+            self.output_text.insert(tk.END, message)
+            messagebox.showinfo("ARI Results", message)
             self.log_message(f"ARI calculated: {ari:.4f}")
             
         except Exception as e:
             self.show_error("Error calculating ARI", str(e))
 
-    def show_clustering_coefficient(self):
-        """Calculate and display clustering coefficient for each node"""
-        try:
-            if not self.create_graph():
-                return
-                
-            if self.graph_type.get() == 'Directed Graph':
-                clustering = nx.clustering(self.G.to_undirected())
-            else:
-                clustering = nx.clustering(self.G)
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, "Clustering Coefficients:\n\n")
-            
-            # Sort nodes by clustering coefficient
-            sorted_nodes = sorted(clustering.items(), key=lambda x: x[1], reverse=True)
-            
-            for node, coeff in sorted_nodes:
-                self.output_text.insert(tk.END, f"Node {node}: {coeff:.4f}\n")
-            
-            avg_clustering = sum(clustering.values()) / len(clustering)
-            self.output_text.insert(tk.END, f"\nAverage Clustering Coefficient: {avg_clustering:.4f}")
-            
-            self.log_message("Clustering coefficients calculated")
-            
-        except Exception as e:
-            self.show_error("Error calculating clustering coefficients", str(e))
-
-    def show_average_clustering(self):
-        """Calculate and display the average clustering coefficient"""
-        try:
-            if not self.create_graph():
-                return
-                
-            if self.graph_type.get() == 'Directed Graph':
-                avg_clustering = nx.average_clustering(self.G.to_undirected())
-            else:
-                avg_clustering = nx.average_clustering(self.G)
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, f"Average Clustering Coefficient: {avg_clustering:.4f}")
-            
-            self.log_message(f"Average clustering coefficient calculated: {avg_clustering:.4f}")
-            
-        except Exception as e:
-            self.show_error("Error calculating average clustering coefficient", str(e))
-
-    def show_average_path_length(self):
-        """Calculate and display the average shortest path length"""
-        try:
-            if not self.create_graph():
-                return
-                
-            if not nx.is_connected(self.G.to_undirected()):
-                raise ValueError("Graph must be connected to calculate average path length")
-                
-            avg_path_length = nx.average_shortest_path_length(self.G)
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, f"Average Shortest Path Length: {avg_path_length:.4f}")
-            
-            self.log_message(f"Average shortest path length calculated: {avg_path_length:.4f}")
-            
-        except Exception as e:
-            self.show_error("Error calculating average path length", str(e))
-
     def show_harmonic_centrality(self):
         """Calculate and display harmonic centrality for each node"""
         try:
-            if not self.create_graph():
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
                 return
                 
             harmonic = nx.harmonic_centrality(self.G)
+            sorted_nodes = sorted(harmonic.items(), key=lambda x: x[1], reverse=True)
+            top_nodes = "\n".join([f"Node {node}: {centrality:.4f}" for node, centrality in sorted_nodes[:5]])
+            avg_harmonic = sum(harmonic.values()) / len(harmonic)
+            message = f"Top 5 Nodes:\n{top_nodes}\n\nAverage Harmonic Centrality: {avg_harmonic:.4f}"
+            
+            full_output = "Harmonic Centrality Scores:\n\n" + "\n".join(
+                [f"Node {node}: {centrality:.4f}" for node, centrality in sorted_nodes]
+            ) + f"\n\nAverage: {avg_harmonic:.4f}"
             
             self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, "Harmonic Centrality Scores:\n\n")
-            
-            # Sort nodes by harmonic centrality
-            sorted_nodes = sorted(harmonic.items(), key=lambda x: x[1], reverse=True)
-            
-            for node, centrality in sorted_nodes:
-                self.output_text.insert(tk.END, f"Node {node}: {centrality:.4f}\n")
-            
-            avg_harmonic = sum(harmonic.values()) / len(harmonic)
-            self.output_text.insert(tk.END, f"\nAverage Harmonic Centrality: {avg_harmonic:.4f}")
-            
+            self.output_text.insert(tk.END, full_output)
+            messagebox.showinfo("Harmonic Centrality Results", message)
             self.log_message("Harmonic centrality calculated")
             
         except Exception as e:
@@ -1024,31 +845,17 @@ class NetworkAnalysisGUI:
         self.figure.clear()
         self.canvas.draw()
         self.output_text.delete(1.0, tk.END)
-        self.edge_df = None
-        self.node_df = None
+        self.node_attributes = {}
+        self.edge_attributes = pd.DataFrame()
         self.G = None
+        self.communities = {}
         self.log_message("All data cleared")
-
-    def log_message(self, message):
-        """Add a message to the output log"""
-        self.output_text.insert(tk.END, f"[LOG] {message}\n")
-        self.output_text.see(tk.END)
-
-    def show_error(self, title, message):
-        """Show an error message"""
-        error_msg = f"{title}:\n{message}"
-        self.log_message(error_msg)
-        messagebox.showerror(title, message)
-
-def main():
-    root = tk.Tk()
-    root.geometry("1200x800")
-    app = NetworkAnalysisGUI(root)
-    root.mainloop()
 
 if __name__ == "__main__":
     try:
-        main()
+        root = tk.Tk()
+        app = SocialNetworkAnalyzer(root)
+        root.mainloop()
     except Exception as e:
         error_msg = f"Unhandled exception: {str(e)}\n{traceback.format_exc()}"
         messagebox.showerror("Critical Error", error_msg)

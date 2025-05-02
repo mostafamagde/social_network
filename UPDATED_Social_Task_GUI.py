@@ -4,7 +4,7 @@ import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from community import best_partition
+# from community import community_louvain
 from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
 import numpy as np
 from collections import defaultdict
@@ -12,6 +12,10 @@ import math
 import traceback
 import sys
 import random
+import itertools
+import threading
+import time
+from networkx.algorithms.community import modularity
 
 class SocialNetworkAnalyzer:
     def __init__(self, root):
@@ -176,6 +180,8 @@ class SocialNetworkAnalyzer:
         ttk.Button(frame, text="Calculate Clustering Coefficients", command=self.calculate_clustering).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Degree Distribution", command=self.plot_degree_distribution).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Top 10 Degrees", command=self.show_top_degrees).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Show Top 10 Closeness", command=self.show_top_closeness).pack(fill=tk.X, pady=2)
         
     def setup_filter_controls(self):
         frame = ttk.LabelFrame(self.control_frame, text="Centrality Filters", padding=10)
@@ -190,6 +196,8 @@ class SocialNetworkAnalyzer:
                   command=lambda: self.filter_centrality('betweenness')).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Filter by Closeness", 
                   command=lambda: self.filter_centrality('closeness')).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Filter by Harmonic", 
+                  command=lambda: self.filter_centrality('harmonic')).pack(fill=tk.X, pady=2)
         
     def setup_metrics_controls(self):
         frame = ttk.LabelFrame(self.control_frame, text="Metrics", padding=10)
@@ -417,25 +425,206 @@ class SocialNetworkAnalyzer:
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
             return
+
+        if method == "girvan":
+            # Create responsive progress window
+            progress = tk.Toplevel(self.root)
+            progress.title("Girvan-Newman Progress")
+            progress.geometry("500x250")
+            progress.protocol("WM_DELETE_WINDOW", lambda: None)  # Disable close button
             
+            # Progress components
+            self.gn_status = tk.StringVar(value="Initializing algorithm...")
+            tk.Label(progress, textvariable=self.gn_status, wraplength=450).pack(pady=10)
+            
+            self.gn_progress = ttk.Progressbar(progress, orient='horizontal', 
+                                             length=450, mode='determinate')
+            self.gn_progress.pack(pady=5)
+            
+            stats_frame = tk.Frame(progress)
+            stats_frame.pack(pady=5)
+            
+            tk.Label(stats_frame, text="Edges Processed:").grid(row=0, column=0, sticky='e')
+            self.edges_var = tk.StringVar(value="0/0")
+            tk.Label(stats_frame, textvariable=self.edges_var).grid(row=0, column=1, sticky='w')
+            
+            tk.Label(stats_frame, text="Communities:").grid(row=1, column=0, sticky='e')
+            self.comm_var = tk.StringVar(value="1")
+            tk.Label(stats_frame, textvariable=self.comm_var).grid(row=1, column=1, sticky='w')
+            
+            btn_frame = tk.Frame(progress)
+            btn_frame.pack(pady=10)
+            
+            self.cancel_btn = tk.Button(btn_frame, text="Cancel", command=self.cancel_gn)
+            self.cancel_btn.pack(side=tk.LEFT, padx=5)
+            
+            # Start algorithm in separate thread
+            self._cancel_gn = False
+            self._gn_thread = threading.Thread(target=self.run_girvan_newman, args=(progress,))
+            self._gn_thread.start()
+            
+            # Start progress updater
+            self.update_progress(progress)
+
+    def cancel_gn(self):
+        self._cancel_gn = True
+        self.cancel_btn.config(state=tk.DISABLED, text="Cancelling...")
+
+    def update_progress(self, progress):
+        if self._gn_thread.is_alive():
+            progress.update()
+            self.root.after(100, lambda: self.update_progress(progress))
+        else:
+            progress.destroy()
+
+    def run_girvan_newman(self, progress_window):
         try:
-            if method == "louvain":
-                partition = best_partition(self.G.to_undirected())
-                self.communities = partition
-                message = "Louvain communities detected"
-            elif method == "girvan":
-                communities = nx.community.girvan_newman(self.G.to_undirected())
-                self.communities = {node: i for i, comm in enumerate(next(communities)) for node in comm}
-                message = "Girvan-Newman communities detected"
+            # --- Addition 1: Graph Simplification ---
+            self.gn_status.set("Simplifying graph...")
+            progress_window.update()
             
+            G = self.G.to_undirected()
+            
+            # Remove self-loops and parallel edges
+            G.remove_edges_from(nx.selfloop_edges(G))
+            G = nx.Graph(G)  # Convert to simple graph
+            
+            initial_edges = len(G.edges())
+            self.gn_progress['maximum'] = initial_edges
+            
+            # --- Betweenness Calculation with Progress ---
+            def betweenness_with_progress(G):
+                self.gn_status.set("Calculating edge betweenness...")
+                progress_window.update()
+                betweenness = nx.edge_betweenness_centrality(
+                    G, 
+                    k=min(500, len(G)//10), 
+                    seed=42,
+                    weight='weight' if nx.get_edge_attributes(G, 'weight') else None
+                )
+                return max(betweenness.items(), key=lambda x: x[1])[0] if betweenness else None
+
+            # Initialize communities and tracking
+            communities = list(nx.connected_components(G))
+            best_communities = communities
+            best_modularity = nx.community.modularity(self.G, communities)
+            
+            edge_removal_count = 0
+            self.edges_var.set(f"0/{initial_edges}")
+            
+            # --- Time Estimation Setup ---
+            start_time = time.time()
+            last_update = time.time()
+            last_edge_count = 0
+            
+            # --- Visual Feedback Setup ---
+            last_visual_update = 0
+            preview_interval = max(1, initial_edges // 20)  # Show ~20 previews total
+            
+            # Main algorithm loop
+            while not self._cancel_gn and len(G.edges()) > 0:
+                current_time = time.time()
+                
+                # --- Edge Processing ---
+                edge_to_remove = betweenness_with_progress(G)
+                if not edge_to_remove:
+                    break
+                    
+                G.remove_edge(*edge_to_remove)
+                edge_removal_count += 1
+                
+                # --- Progress Updates ---
+                if current_time - last_update > 0.5:  # Update every 0.5 seconds
+                    removed = initial_edges - len(G.edges())
+                    self.edges_var.set(f"{removed}/{initial_edges}")
+                    self.gn_progress['value'] = removed
+                    
+                    # Calculate processing speed
+                    elapsed = current_time - start_time
+                    edges_per_sec = edge_removal_count / elapsed
+                    remaining_edges = initial_edges - edge_removal_count
+                    remaining_time = remaining_edges / edges_per_sec if edges_per_sec > 0 else 0
+                    
+                    # Update status
+                    self.gn_status.set(
+                        f"Processed {edge_removal_count}/{initial_edges} edges\n"
+                        f"Speed: {edges_per_sec:.1f} edges/sec\n"
+                        f"Remaining: {remaining_time:.1f} seconds"
+                    )
+                    last_update = current_time
+                    progress_window.update()
+                
+                # --- Community Detection ---
+                new_communities = list(nx.connected_components(G))
+                if len(new_communities) > len(communities):
+                    communities = new_communities
+                    current_mod = nx.community.modularity(self.G, communities)
+                    
+                    if current_mod > best_modularity:
+                        best_modularity = current_mod
+                        best_communities = communities
+                        self.comm_var.set(str(len(best_communities)))
+                        progress_window.update()
+                
+                # --- Addition 3: Visual Feedback ---
+                if (edge_removal_count - last_visual_update) >= preview_interval:
+                    self.root.after(0, lambda: self.update_visualization_preview(best_communities))
+                    last_visual_update = edge_removal_count
+            
+            # Finalization
+            if self._cancel_gn:
+                self.gn_status.set("Algorithm cancelled")
+                return
+                
+            # Save results
+            self.communities = {node: i for i, comm in enumerate(best_communities) for node in comm}
             self.color_var.set("community")
-            self.show_community_metrics()
-            self.update_visualization()
-            messagebox.showinfo("Success", message)
+            
+            # Final update
+            self.root.after(0, lambda: (
+                self.show_community_metrics(),
+                self.update_visualization(),
+                messagebox.showinfo(
+                    "Completed", 
+                    f"Found {len(best_communities)} communities\n"
+                    f"Modularity: {best_modularity:.4f}\n"
+                    f"Edges processed: {edge_removal_count}\n"
+                    f"Time taken: {time.time()-start_time:.1f} seconds"
+                )
+            ))
             
         except Exception as e:
-            messagebox.showerror("Error", f"Community detection failed: {str(e)}")
-    
+            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+        finally:
+            self._cancel_gn = False
+
+    def update_visualization_preview(self, communities):
+        """Create a simplified preview of current communities"""
+        if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists():
+            self.preview_window = tk.Toplevel(self.root)
+            self.preview_window.title("Community Preview")
+            self.preview_canvas = FigureCanvasTkAgg(plt.figure(figsize=(6,4)), self.preview_window)
+            self.preview_canvas.get_tk_widget().pack()
+        
+        fig = self.preview_canvas.figure
+        fig.clf()
+        ax = fig.add_subplot(111)
+        
+        # Create temporary community mapping
+        temp_communities = {node: i for i, comm in enumerate(communities) for node in comm}
+        
+        # Simple visualization
+        pos = nx.spring_layout(self.G, seed=42)
+        nx.draw_networkx_nodes(
+            self.G, pos, 
+            node_color=[temp_communities.get(n, 0) for n in self.G.nodes()],
+            cmap=plt.cm.tab20,
+            ax=ax
+        )
+        nx.draw_networkx_edges(self.G, pos, alpha=0.1, ax=ax)
+        ax.set_title(f"Current Communities: {len(communities)}")
+        self.preview_canvas.draw()
+        
     def show_community_metrics(self):
         if not self.communities:
             messagebox.showerror("Error", "Run community detection first")
@@ -542,7 +731,7 @@ class SocialNetworkAnalyzer:
             self.canvas.draw()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to plot degree distribution: {str(e)}")
-    
+
     def calculate_path_length(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
@@ -561,6 +750,51 @@ class SocialNetworkAnalyzer:
         except Exception as e:
             messagebox.showerror("Error", f"Path length calculation failed: {str(e)}")
     
+    def show_top_degrees(self):
+        """Display top 10 nodes by degree centrality"""
+        try:
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
+                return
+
+            degrees = dict(self.G.degree())
+            sorted_degrees = sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            result = "Top 10 Nodes by Degree:\n"
+            result += "\n".join([f"{node}: {degree}" for node, degree in sorted_degrees])
+            
+            # Display in output text
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, result)
+            
+            messagebox.showinfo("Top Degrees", result)
+            self.log_message("Displayed top 10 degrees")
+            
+        except Exception as e:
+            self.show_error("Error showing degrees", str(e))
+
+    def show_top_closeness(self):
+        """Display top 10 nodes by closeness centrality"""
+        try:
+            if self.G is None:
+                messagebox.showerror("Error", "No graph loaded")
+                return
+
+            closeness = nx.closeness_centrality(self.G)
+            sorted_closeness = sorted(closeness.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            result = "Top 10 Nodes by Closeness Centrality:\n"
+            result += "\n".join([f"{node}: {score:.4f}" for node, score in sorted_closeness])
+            
+            # Display in output text
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, result)
+            
+            messagebox.showinfo("Top Closeness", result)
+            self.log_message("Displayed top 10 closeness centrality")
+            
+        except Exception as e:
+            self.show_error("Error showing closeness", str(e))
     def filter_centrality(self, centrality_type):
         """Filter nodes based on centrality measure"""
         try:
@@ -582,6 +816,10 @@ class SocialNetworkAnalyzer:
                 centrality = nx.closeness_centrality(self.G)
                 title = f"Nodes with Closeness Centrality ≥ {threshold}"
                 color = '#dc3545'
+            elif centrality_type == 'harmonic':
+                centrality = nx.harmonic_centrality(self.G)
+                title = f"Nodes with Harmonic Centrality ≥ {threshold}"
+                color = '#800080'
             else:
                 raise ValueError("Invalid centrality type")
             
@@ -702,40 +940,39 @@ class SocialNetworkAnalyzer:
             self.show_error("Error calculating modularity", str(e))
 
     def show_nmi(self):
-      try:
-        if self.G is None or not self.node_attributes or 'class' not in next(iter(self.node_attributes.values()), {}):
-            raise ValueError("Node data with ground truth classes is required")
-        
-        if not self.communities:
-            messagebox.showerror("Error", "Run community detection first")
-            return
+        try:
+            if self.G is None or not self.node_attributes or 'class' not in next(iter(self.node_attributes.values()), {}):
+                raise ValueError("Node data with ground truth classes is required")
+            
+            if not self.communities:
+                messagebox.showerror("Error", "Run community detection first")
+                return
 
-        ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
-        truth = [ground_truth[node] for node in self.G.nodes()]
+            ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
+            truth = [ground_truth[node] for node in self.G.nodes()]
 
-        # Handle communities as either dict or list of sets/lists
-        if isinstance(self.communities, dict):
-            detected = [self.communities[node] for node in self.G.nodes()]
-        elif isinstance(self.communities, (list, tuple)):
-            node_to_community = {}
-            for i, community in enumerate(self.communities):
-                for node in community:
-                    node_to_community[node] = i
-            detected = [node_to_community[node] for node in self.G.nodes()]
-        else:
-            raise ValueError("Unrecognized format for communities")
+            # Handle communities as either dict or list of sets/lists
+            if isinstance(self.communities, dict):
+                detected = [self.communities[node] for node in self.G.nodes()]
+            elif isinstance(self.communities, (list, tuple)):
+                node_to_community = {}
+                for i, community in enumerate(self.communities):
+                    for node in community:
+                        node_to_community[node] = i
+                detected = [node_to_community[node] for node in self.G.nodes()]
+            else:
+                raise ValueError("Unrecognized format for communities")
 
-        nmi = normalized_mutual_info_score(truth, detected)
-        message = f"Normalized Mutual Information (NMI): {nmi:.4f}"
+            nmi = normalized_mutual_info_score(truth, detected)
+            message = f"Normalized Mutual Information (NMI): {nmi:.4f}"
 
-        self.output_text.delete(1.0, tk.END)
-        self.output_text.insert(tk.END, message)
-        messagebox.showinfo("NMI Results", message)
-        self.log_message(f"NMI calculated: {nmi:.4f}")
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, message)
+            messagebox.showinfo("NMI Results", message)
+            self.log_message(f"NMI calculated: {nmi:.4f}")
 
-      except Exception as e:
-        self.show_error("Error calculating NMI", str(e))
-
+        except Exception as e:
+            self.show_error("Error calculating NMI", str(e))
 
     def show_ari(self):
         """Calculate and display Adjusted Rand Index"""
