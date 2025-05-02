@@ -5,13 +5,12 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from community import best_partition
-from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
+from sklearn.metrics import normalized_mutual_info_score
 import numpy as np
 from collections import defaultdict
 import math
 import traceback
 import sys
-import random
 
 class SocialNetworkAnalyzer:
     def __init__(self, root):
@@ -19,89 +18,82 @@ class SocialNetworkAnalyzer:
         self.root.title("Social Network Analysis Tool")
         self.root.geometry("1400x900")
         
-        # Data storage
+        # Initialize data structures
         self.G = None
         self.original_graph = None
         self.node_attributes = {}
         self.edge_attributes = pd.DataFrame()
         self.communities = {}
-        
-        # Visualization settings
         self.layout_pos = None
         self.current_layout = "spring"
         self.layout_seed = 42
+        
+        # Visualization parameters
         self.node_size = 300
         self.custom_color = "#1f78b4"
         self.node_shape = "o"
         self.edge_width = 1.0
         self.edge_style = "solid"
         self.arrow_size = 10
-        self.node_label_visible = True
-        self.node_label_size = 8
+        self.color_var = tk.StringVar(value="manual")
         
         # Initialize UI
         self.setup_ui()
-        
-    def setup_ui(self):
-        # Configure styles
+        self.setup_styles()
+
+    def setup_styles(self):
         self.style = ttk.Style()
         self.style.configure('TFrame', background='#f0f0f0')
         self.style.configure('TButton', font=('Arial', 10), padding=5)
         self.style.configure('Header.TLabel', font=('Arial', 12, 'bold'))
-        
-        # Main frames
-        self.control_frame_container = ttk.Frame(self.root)
-        self.control_frame_container.pack(side=tk.LEFT, fill=tk.Y)
-        
-        # Create canvas and scrollbar for control frame
-        self.control_canvas = tk.Canvas(self.control_frame_container)
-        self.control_scrollbar = ttk.Scrollbar(self.control_frame_container, 
-                                              orient="vertical", 
-                                              command=self.control_canvas.yview)
-        self.scrollable_frame = ttk.Frame(self.control_canvas)
-        
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.control_canvas.configure(
-                scrollregion=self.control_canvas.bbox("all")
-            )
-        )
-        
-        self.control_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.control_canvas.configure(yscrollcommand=self.control_scrollbar.set)
-        
-        self.control_canvas.pack(side="left", fill="both", expand=True)
-        self.control_scrollbar.pack(side="right", fill="y")
-        
-        # Control frame inside scrollable canvas
-        self.control_frame = ttk.Frame(self.scrollable_frame, width=300, padding=10)
-        self.control_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Visualization canvas
+
+    def setup_ui(self):
+        self.create_control_panel()
+        self.create_visualization_area()
+        self.create_output_console()
+
+    def create_control_panel(self):
+        control_frame = ttk.Frame(self.root, width=300)
+        control_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Create scrollable container
+        canvas = tk.Canvas(control_frame)
+        scrollbar = ttk.Scrollbar(control_frame, orient="vertical", command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Add control sections
+        self.create_data_loading_section(scroll_frame)
+        self.create_visualization_controls(scroll_frame)
+        self.create_analysis_controls(scroll_frame)
+        self.create_filter_controls(scroll_frame)
+        self.create_metrics_controls(scroll_frame)
+
+    def create_visualization_area(self):
         self.figure = plt.figure(figsize=(10, 8), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    def create_output_console(self):
+        output_frame = ttk.Frame(self.root)
+        output_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
         
-        # Output frame
-        self.output_frame = ttk.Frame(self.root)
-        self.output_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
-        self.output_text = tk.Text(self.output_frame, wrap=tk.WORD, font=('Consolas', 10))
+        self.output_text = tk.Text(output_frame, wrap=tk.WORD, font=('Consolas', 10))
         self.output_text.pack(fill=tk.BOTH, expand=True)
         
         scrollbar = ttk.Scrollbar(self.output_text)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.output_text.config(yscrollcommand=scrollbar.set)
         scrollbar.config(command=self.output_text.yview)
-        
-        # Build UI sections
-        self.setup_data_loading()
-        self.setup_visualization_controls()
-        self.setup_analysis_controls()
-        self.setup_filter_controls()
-        self.setup_metrics_controls()
-        
-    def setup_data_loading(self):
-        frame = ttk.LabelFrame(self.control_frame, text="Data Loading", padding=10)
+
+    def create_data_loading_section(self, parent):
+        frame = ttk.LabelFrame(parent, text="Data Loading", padding=10)
         frame.pack(fill=tk.X, pady=5)
         
         ttk.Button(frame, text="Load Nodes CSV", command=self.load_nodes).pack(fill=tk.X, pady=2)
@@ -109,47 +101,33 @@ class SocialNetworkAnalyzer:
         
         self.directed_var = tk.BooleanVar()
         ttk.Checkbutton(frame, text="Directed Graph", variable=self.directed_var).pack(anchor=tk.W)
-        
-    def setup_visualization_controls(self):
-        frame = ttk.LabelFrame(self.control_frame, text="Visualization Settings", padding=10)
+
+    def create_visualization_controls(self, parent):
+        frame = ttk.LabelFrame(parent, text="Visualization Settings", padding=10)
         frame.pack(fill=tk.X, pady=5)
         
         # Layout selection
         ttk.Label(frame, text="Layout:").pack(anchor=tk.W)
         self.layout_var = tk.StringVar(value="spring")
         ttk.Combobox(frame, textvariable=self.layout_var, 
-                     values=["spring", "circular", "kamada-kawai", "spectral", "shell", "tree", "radial"]).pack(fill=tk.X)
+                    values=["spring", "circular", "kamada-kawai", "spectral", "shell", "tree", "radial"]).pack(fill=tk.X)
         
-        # Node size control
+        # Node controls
         ttk.Label(frame, text="Node Size:").pack(anchor=tk.W)
         self.size_scale = ttk.Scale(frame, from_=10, to=1000, value=300)
         self.size_scale.pack(fill=tk.X)
         
-        # Color controls
         ttk.Label(frame, text="Node Color:").pack(anchor=tk.W)
         color_frame = ttk.Frame(frame)
         color_frame.pack(fill=tk.X)
-        self.color_button = ttk.Button(color_frame, text="Choose Color", command=self.choose_node_color)
-        self.color_button.pack(side=tk.LEFT)
+        ttk.Button(color_frame, text="Choose Color", command=self.choose_node_color).pack(side=tk.LEFT)
         self.color_preview = tk.Canvas(color_frame, width=50, height=20, bg=self.custom_color)
         self.color_preview.pack(side=tk.LEFT, padx=5)
         
-        # Color mapping selection
-        self.color_var = tk.StringVar(value="manual")
         ttk.Combobox(frame, textvariable=self.color_var, 
-                     values=["manual", "community", "degree", "betweenness", "pagerank", "eigenvector"]).pack(fill=tk.X)
+                    values=["manual", "community", "degree", "in_degree", "out_degree", "betweenness", "pagerank", "eigenvector"]).pack(fill=tk.X)
         
-        # Shape controls
-        ttk.Label(frame, text="Node Shape:").pack(anchor=tk.W)
-        shape_frame = ttk.Frame(frame)
-        shape_frame.pack(fill=tk.X)
-        self.shape_var = tk.StringVar(value="o")
-        shapes = [("Circle", "o"), ("Square", "s"), ("Triangle", "^"), ("Diamond", "D")]
-        for text, shape in shapes:
-            ttk.Radiobutton(shape_frame, text=text, variable=self.shape_var, 
-                           value=shape).pack(side=tk.LEFT)
-        
-        # Edge styling
+        # Edge controls
         ttk.Label(frame, text="Edge Style:").pack(anchor=tk.W)
         self.edge_style_var = tk.StringVar(value="solid")
         ttk.Combobox(frame, textvariable=self.edge_style_var,
@@ -161,117 +139,109 @@ class SocialNetworkAnalyzer:
         
         ttk.Button(frame, text="Update Visualization", command=self.update_visualization).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Reapply Layout", command=self.force_new_layout).pack(fill=tk.X)
-        
-    def setup_analysis_controls(self):
-        frame = ttk.LabelFrame(self.control_frame, text="Analysis Tools", padding=10)
+
+    def create_analysis_controls(self, parent):
+        frame = ttk.LabelFrame(parent, text="Analysis Tools", padding=10)
         frame.pack(fill=tk.X, pady=5)
         
-        ttk.Button(frame, text="Run Louvain Community Detection", 
-                  command=lambda: self.run_community_detection("louvain")).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Run Girvan-Newman Community Detection", 
-                  command=lambda: self.run_community_detection("girvan")).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Compare Community Algorithms", 
-                  command=self.compare_community_algorithms).pack(fill=tk.X, pady=2)
+        buttons = [
+            ("Run Louvain Community Detection", lambda: self.run_community_detection("louvain")),
+            ("Run Girvan-Newman Community Detection", lambda: self.run_community_detection("girvan")),
+            ("Compare Community Algorithms", self.compare_community_algorithms),
+            ("Calculate PageRank", self.calculate_pagerank),
+            ("Calculate Betweenness Centrality", self.calculate_betweenness),
+            ("Calculate Clustering Coefficients", self.calculate_clustering),
+            ("Calculate Eigenvector Centrality", self.calculate_eigenvector),
+            ("Show Degree Distribution", self.plot_degree_distribution),
+            ("Calculate Average Path Length", self.calculate_path_length),
+            ("Show Top 10 Degrees", self.show_top_degrees),
+            ("Show Top 10 Closeness", self.show_top_closeness)
+        ]
         
-        ttk.Button(frame, text="Calculate PageRank", command=self.calculate_pagerank).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate Clustering Coefficients", command=self.calculate_clustering).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate Eigenvector Centrality", command=self.calculate_eigenvector).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Show Degree Distribution", command=self.plot_degree_distribution).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate average Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Show Top 10 Degrees", command=self.show_top_degrees).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Show Top 10 Closeness", command=self.show_top_closeness).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Visualize Betweenness Distribution", command=lambda: self.visualize_metric_distribution("betweenness")).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Visualize Closeness Distribution", command=lambda: self.visualize_metric_distribution("closeness")).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Visualize Clustering Distribution", command=lambda: self.visualize_metric_distribution("clustering")).pack(fill=tk.X, pady=2)
-        
-    def setup_filter_controls(self):
-        frame = ttk.LabelFrame(self.control_frame, text="Centrality Filters", padding=10)
+        for text, command in buttons:
+            ttk.Button(frame, text=text, command=command).pack(fill=tk.X, pady=2)
+
+    def create_filter_controls(self, parent):
+        frame = ttk.LabelFrame(parent, text="Centrality Filters", padding=10)
         frame.pack(fill=tk.X, pady=5)
         
         self.filter_threshold = tk.DoubleVar(value=0.0)
         ttk.Entry(frame, textvariable=self.filter_threshold).pack(fill=tk.X)
         
-        ttk.Button(frame, text="Filter by Degree", 
-                  command=lambda: self.filter_centrality('degree')).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Filter by Betweenness", 
-                  command=lambda: self.filter_centrality('betweenness')).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Filter by Closeness", 
-                  command=lambda: self.filter_centrality('closeness')).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Filter by Harmonic", 
-                  command=lambda: self.filter_centrality('harmonic')).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Filter by Eigenvector", 
-                  command=lambda: self.filter_centrality('eigenvector')).pack(fill=tk.X, pady=2)
+        filters = [
+            ("Filter by Degree", 'degree'),
+            ("Filter by In-Degree", 'in_degree'),
+            ("Filter by Out-Degree", 'out_degree'),
+            ("Filter by Betweenness", 'betweenness'),
+            ("Filter by Closeness", 'closeness'),
+            ("Filter by Harmonic", 'harmonic'),
+            ("Filter by Eigenvector", 'eigenvector')
+        ]
         
-    def setup_metrics_controls(self):
-        frame = ttk.LabelFrame(self.control_frame, text="Metrics", padding=10)
+        for text, centrality_type in filters:
+            ttk.Button(frame, text=text, command=lambda ct=centrality_type: self.filter_centrality(ct)).pack(fill=tk.X, pady=2)
+
+    def create_metrics_controls(self, parent):
+        frame = ttk.LabelFrame(parent, text="Metrics", padding=10)
         frame.pack(fill=tk.X, pady=5)
         
-        ttk.Button(frame, text="Show Conductance", command=self.show_conductance).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Show Modularity", command=self.show_modularity).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Show NMI", command=self.show_nmi).pack(fill=tk.X, pady=2)
-      
-        ttk.Button(frame, text="Show Harmonic Centrality", command=self.show_harmonic_centrality).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Clear All", command=self.clear_all).pack(fill=tk.X, pady=5)
+        metrics = [
+            ("Show Conductance", self.show_conductance),
+            ("Show Modularity", self.show_modularity),
+            ("Show NMI", self.show_nmi),
+            ("Show Harmonic Centrality", self.show_harmonic_centrality),
+            ("Clear All", self.clear_all)
+        ]
         
+        for text, command in metrics:
+            ttk.Button(frame, text=text, command=command).pack(fill=tk.X, pady=2)
+
     def log_message(self, message):
-        """Add a message to the output log"""
         self.output_text.insert(tk.END, f"[LOG] {message}\n")
         self.output_text.see(tk.END)
 
-    def show_error(self, title, message):
-        """Show an error message"""
-        error_msg = f"{title}:\n{message}"
-        self.log_message(error_msg)
+    def handle_error(self, title, message):
+        self.log_message(f"{title}: {message}")
         messagebox.showerror(title, message)
-        
-    def choose_node_color(self):
-        color = colorchooser.askcolor(title="Choose Node Color", initialcolor=self.custom_color)
-        if color[1]:
-            self.custom_color = color[1]
-            self.color_preview.config(bg=self.custom_color)
-            self.update_visualization()
-        
+
     def load_nodes(self):
         file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
-        if not file_path:
-            return
-            
+        if not file_path: return
+        
         try:
             df = pd.read_csv(file_path)
             df.columns = df.columns.str.lower()
             
             if 'id' not in df.columns:
-                messagebox.showerror("Error", "Node CSV must contain an 'id' column")
+                self.handle_error("Error", "Node CSV must contain 'id' column")
                 return
                 
             self.node_attributes = df.set_index('id').to_dict('index')
-            messagebox.showinfo("Success", f"Loaded {len(self.node_attributes)} node attributes")
+            self.log_message(f"Loaded {len(self.node_attributes)} nodes")
             self.layout_pos = None
             
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load nodes: {str(e)}")
-    
+            self.handle_error("Node Loading Error", str(e))
+
     def load_edges(self):
         file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
-        if not file_path:
-            return
-            
+        if not file_path: return
+        
         try:
             self.edge_attributes = pd.read_csv(file_path)
             self.edge_attributes.columns = self.edge_attributes.columns.str.lower()
             
             if not {'source', 'target'}.issubset(self.edge_attributes.columns):
-                messagebox.showerror("Error", "Edge CSV must contain 'source' and 'target' columns")
+                self.handle_error("Error", "Edge CSV must contain 'source' and 'target'")
                 return
                 
             self.create_graph()
             self.update_visualization()
-            messagebox.showinfo("Success", f"Loaded {len(self.edge_attributes)} edges")
+            self.log_message(f"Loaded {len(self.edge_attributes)} edges")
             
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load edges: {str(e)}")
-    
+            self.handle_error("Edge Loading Error", str(e))
+
     def create_graph(self):
         try:
             self.G = nx.DiGraph() if self.directed_var.get() else nx.Graph()
@@ -287,80 +257,46 @@ class SocialNetworkAnalyzer:
             self.layout_pos = None
             
         except Exception as e:
-            messagebox.showerror("Error", f"Graph creation failed: {str(e)}")
-            self.G = None
-    
+            self.handle_error("Graph Creation Error", str(e))
+
     def update_visualization(self):
-        if self.G is None or len(self.G.nodes()) == 0:
-            return
-            
+        if not self.G or len(self.G.nodes) == 0: return
+        
         self.figure.clf()
         ax = self.figure.add_subplot(111)
         
-        if self.layout_pos is None or self.current_layout != self.layout_var.get():
+        if not self.layout_pos or self.current_layout != self.layout_var.get():
             self.current_layout = self.layout_var.get()
             self.layout_pos = self.calculate_layout()
-            
+        
         node_colors = self.get_node_colors()
-        
-        nx.draw_networkx_nodes(
-            self.G, self.layout_pos, ax=ax,
-            node_size=float(self.size_scale.get()),
-            node_color=node_colors,
-            cmap=plt.cm.tab20 if self.color_var.get() != "manual" else None,
-            node_shape=self.shape_var.get()
-        )
-        
+        node_size = float(self.size_scale.get())
         edge_style = self.edge_style_var.get()
         edge_width = float(self.edge_width_scale.get())
         
-        if self.directed_var.get():
-            nx.draw_networkx_edges(
-                self.G, self.layout_pos, ax=ax, 
-                width=edge_width,
-                style=edge_style,
-                arrows=True,
-                arrowsize=10
-            )
-        else:
-            nx.draw_networkx_edges(
-                self.G, self.layout_pos, ax=ax, 
-                width=edge_width,
-                style=edge_style
-            )
+        nx.draw_networkx_nodes(
+            self.G, self.layout_pos, ax=ax,
+            node_size=node_size,
+            node_color=node_colors,
+            cmap=plt.cm.viridis if self.color_var.get() != "manual" else None,
+            node_shape=self.node_shape
+        )
         
-        if len(self.G.nodes()) <= 50:
+        nx.draw_networkx_edges(
+            self.G, self.layout_pos, ax=ax,
+            width=edge_width,
+            style=edge_style,
+            arrows=self.G.is_directed(),
+            arrowsize=10
+        )
+        
+        if len(self.G.nodes) <= 50:
             nx.draw_networkx_labels(self.G, self.layout_pos, ax=ax, font_size=8)
         
         self.canvas.draw()
-    
-    def get_node_colors(self):
-        color_by = self.color_var.get()
-        
-        if color_by == "manual":
-            return self.custom_color
-        elif color_by == "community":
-            if not self.communities:
-                return self.custom_color
-            return [self.communities.get(node, 0) for node in self.G.nodes()]
-        elif color_by == "degree":
-            degrees = dict(self.G.degree())
-            return [degrees[node] for node in self.G.nodes()]
-        elif color_by == "betweenness":
-            betweenness = nx.betweenness_centrality(self.G)
-            return [betweenness[node] for node in self.G.nodes()]
-        elif color_by == "pagerank":
-            pagerank = nx.pagerank(self.G)
-            return [pagerank[node] for node in self.G.nodes()]
-        elif color_by == "eigenvector":
-            eigenvector = nx.eigenvector_centrality(self.G)
-            return [eigenvector[node] for node in self.G.nodes()]
-        else:
-            return self.custom_color
-    
+
     def calculate_layout(self):
         layout = self.layout_var.get()
-        
         try:
             if layout == "spring":
                 return nx.spring_layout(self.G, seed=self.layout_seed)
@@ -376,17 +312,13 @@ class SocialNetworkAnalyzer:
                 return self.tree_layout()
             elif layout == "radial":
                 return self.radial_layout()
-            else:
-                return nx.spring_layout(self.G, seed=self.layout_seed)
-        except Exception as e:
-            messagebox.showerror("Layout Error", str(e))
             return nx.spring_layout(self.G, seed=self.layout_seed)
-    
+        except Exception as e:
+            self.handle_error("Layout Error", str(e))
+            return nx.spring_layout(self.G, seed=self.layout_seed)
+
     def tree_layout(self):
-        """Hierarchical tree layout using BFS levels"""
-        if len(self.G.nodes()) == 0:
-            return {}
-            
+        if not self.G: return {}
         root = max(self.G.degree(), key=lambda x: x[1])[0]
         levels = {root: 0}
         queue = [root]
@@ -404,39 +336,47 @@ class SocialNetworkAnalyzer:
             y = max_level - level
             x = len([n for n in levels if levels[n] == level and n <= node])
             pos[node] = (x - 0.5 * (len(levels) ** 0.5), y)
-        
         return pos
-    
+
     def radial_layout(self):
-        """Radial layout with root at center"""
-        if len(self.G.nodes()) == 0:
-            return {}
-            
+        if not self.G: return {}
         root = max(self.G.degree(), key=lambda x: x[1])[0]
         levels = nx.single_source_shortest_path_length(self.G, root)
         max_level = max(levels.values()) if levels else 1
         
         pos = {}
         for node, level in levels.items():
-            angle = (node.__hash__() % 628) / 100  # Random angle between 0-6.28
+            angle = (hash(node) % 628) / 100
             radius = level / max_level
             pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
-        
         return pos
-    
-    def force_new_layout(self):
-        self.layout_pos = None
-        self.update_visualization()
-    
+
+    def get_node_colors(self):
+        color_by = self.color_var.get()
+        if color_by == "manual":
+            return [self.custom_color] * len(self.G.nodes)  
+        
+        if color_by == "community":
+            return [self.communities.get(node, 0) for node in self.G.nodes]
+        
+        metrics = {}
+        if self.G.is_directed():
+            metrics.update({
+                'in_degree': dict(self.G.in_degree()),
+                'out_degree': dict(self.G.out_degree()),
+            })
+        metrics.update({
+            'degree': dict(self.G.degree()),
+            'betweenness': nx.betweenness_centrality(self.G),
+            'pagerank': nx.pagerank(self.G),
+            'eigenvector': nx.eigenvector_centrality(self.G)
+        })
+        return [metrics.get(color_by, {}).get(node, 0) for node in self.G.nodes]
+
     def run_community_detection(self, method):
-        if self.G is None:
-            messagebox.showerror("Error", "No graph loaded")
-            return
-            
         try:
             if method == "louvain":
-                partition = best_partition(self.G.to_undirected())
-                self.communities = partition
+                self.communities = best_partition(self.G.to_undirected())
                 message = "Louvain communities detected"
             elif method == "girvan":
                 communities = nx.community.girvan_newman(self.G.to_undirected())
@@ -444,85 +384,85 @@ class SocialNetworkAnalyzer:
                 message = "Girvan-Newman communities detected"
             
             self.color_var.set("community")
-            self.show_community_metrics()
             self.update_visualization()
             messagebox.showinfo("Success", message)
             
         except Exception as e:
-            messagebox.showerror("Error", f"Community detection failed: {str(e)}")
-    
-    def show_community_metrics(self):
-        if not self.communities:
-            messagebox.showerror("Error", "Run community detection first")
-            return
+            self.handle_error("Community Detection Error", str(e))
+
+    def compare_community_algorithms(self):
+        try:
+            louvain_part = best_partition(self.G.to_undirected())
+            girvan_part = self.run_girvan_newman()
             
-        metrics = []
+            l_metrics = self.compute_metrics(louvain_part)
+            g_metrics = self.compute_metrics(girvan_part)
+            
+            top = tk.Toplevel()
+            top.title("Algorithm Comparison")
+            
+            metrics = [
+                ("Number of Communities", "num_communities", "d"),
+                ("Modularity Score", "modularity", ".3f"),
+                ("Average Conductance", "conductance", ".3f"),
+                ("Normalized MI", "nmi", ".3f")
+            ]
+            
+            for i, (label, key, fmt) in enumerate(metrics):
+                ttk.Label(top, text=label).grid(row=i, column=0, sticky='w')
+                ttk.Label(top, text=f"{l_metrics.get(key, 0):{fmt}}").grid(row=i, column=1)
+                ttk.Label(top, text=f"{g_metrics.get(key, 0):{fmt}}").grid(row=i, column=2)
+            
+            ttk.Button(top, text="Close", command=top.destroy).grid(row=len(metrics)+1, columnspan=3)
+            
+        except Exception as e:
+            self.handle_error("Comparison Error", str(e))
+
+    def compute_metrics(self, partition):
         communities = defaultdict(list)
-        for node, comm_id in self.communities.items():
+        for node, comm_id in partition.items():
             communities[comm_id].append(node)
         
-        # Convert to list of sets for modularity calculation
         community_sets = [set(nodes) for nodes in communities.values()]
+        metrics = {
+            'num_communities': len(communities),
+            'modularity': nx.community.modularity(self.G, community_sets)
+        }
         
-        metrics.append(f"Number of communities: {len(communities)}")
-        try:
-            mod = nx.community.modularity(self.G, community_sets)
-            metrics.append(f"Modularity: {mod:.3f}")
-        except Exception as e:
-            metrics.append(f"Modularity calculation failed: {str(e)}")
+        conductances = []
+        for comm in community_sets:
+            cut = nx.cut_size(self.G, comm)
+            volume = nx.volume(self.G, comm)
+            total = self.G.number_of_edges() * 2
+            if min(volume, total - volume) != 0:
+                conductances.append(cut / min(volume, total - volume))
+        metrics['conductance'] = np.mean(conductances) if conductances else 0
         
-        if hasattr(self, 'node_attributes') and 'class' in next(iter(self.node_attributes.values()), {}):
-            try:
-                ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
-                detected = [self.communities[node] for node in self.G.nodes()]
-                truth = [ground_truth[node] for node in self.G.nodes()]
-                nmi = normalized_mutual_info_score(truth, detected)
-                metrics.append(f"Normalized Mutual Information: {nmi:.3f}")
-            except Exception as e:
-                metrics.append(f"NMI calculation failed: {str(e)}")
-        
-        try:
-            conductances = []
-            for comm in community_sets:
-                if len(comm) == 0:
-                    continue
-                cut = nx.cut_size(self.G, comm)
-                volume = nx.volume(self.G, comm)
-                total = self.G.number_of_edges() * 2  # Since each edge is counted twice
-                conductance = cut / min(volume, total - volume) if min(volume, total - volume) != 0 else 0
-                conductances.append(conductance)
-            metrics.append(f"Average Conductance: {np.mean(conductances):.3f}")
-        except Exception as e:
-            metrics.append(f"Conductance calculation failed: {str(e)}")
-        
-        messagebox.showinfo("Community Metrics", "\n".join(metrics))
-    
-    def calculate_pagerank(self):
-        if self.G is None:
-            messagebox.showerror("Error", "No graph loaded")
-            return
+        if 'class' in next(iter(self.node_attributes.values()), {}):
+            ground_truth = [data.get('class', 0) for _, data in self.G.nodes(data=True)]
+            detected = [partition[node] for node in self.G.nodes]
+            metrics['nmi'] = normalized_mutual_info_score(ground_truth, detected)
             
+        return metrics
+
+    def calculate_pagerank(self):
         try:
             pagerank = nx.pagerank(self.G)
             top_nodes = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:10]
             result = "PageRank Top 10:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
             messagebox.showinfo("PageRank Results", result)
         except Exception as e:
-            messagebox.showerror("Error", f"PageRank calculation failed: {str(e)}")
-    
+            self.handle_error("PageRank Error", str(e))
+
     def calculate_betweenness(self):
-        if self.G is None:
-            messagebox.showerror("Error", "No graph loaded")
-            return
-            
         try:
             betweenness = nx.betweenness_centrality(self.G)
             top_nodes = sorted(betweenness.items(), key=lambda x: x[1], reverse=True)[:10]
             result = "Betweenness Centrality Top 10:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
             messagebox.showinfo("Betweenness Results", result)
         except Exception as e:
-            messagebox.showerror("Error", f"Betweenness calculation failed: {str(e)}")
-    
+            self.handle_error("Betweenness Error", str(e))
+
     def calculate_clustering(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
@@ -531,606 +471,160 @@ class SocialNetworkAnalyzer:
         try:
             clustering = nx.clustering(self.G)
             avg_clustering = nx.average_clustering(self.G)
-            transitivity = nx.transitivity(self.G)
-            
+            result = f"Average Clustering Coefficient: {avg_clustering:.3f}\n\n"
+            result += "Top 10 Nodes by Clustering:\n"
             top_nodes = sorted(clustering.items(), key=lambda x: x[1], reverse=True)[:10]
-            
-            # Create visualization
-            self.figure.clf()
-            ax = self.figure.add_subplot(111)
-            
-            # Plot histogram of clustering coefficients
-            ax.hist(clustering.values(), bins=20, color='lightgreen', edgecolor='black')
-            ax.set_title("Clustering Coefficient Distribution")
-            ax.set_xlabel("Clustering Coefficient")
-            ax.set_ylabel("Count")
-            
-            # Display statistics
-            stats = (
-                f"Clustering Statistics:\n"
-                f"Average clustering coefficient: {avg_clustering:.4f}\n"
-                f"Global clustering (transitivity): {transitivity:.4f}\n\n"
-                f"Top 10 Nodes by Clustering:\n"
-            )
-            stats += "\n".join([f"{node}: {coeff:.4f}" for node, coeff in top_nodes])
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, stats)
-            
-            self.canvas.draw()
-            self.log_message("Calculated clustering coefficients")
-            
+            result += "\n".join([f"{node}: {score:.3f}" for node, score in top_nodes])
+            messagebox.showinfo("Clustering Results", result)
         except Exception as e:
             messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
-    
     def calculate_eigenvector(self):
-        """Calculate and display eigenvector centrality"""
-        if self.G is None:
-            messagebox.showerror("Error", "No graph loaded")
-            return
-            
         try:
-            # Calculate eigenvector centrality
+            if self.G.is_directed() and not nx.is_strongly_connected(self.G):
+                raise ValueError("Graph must be strongly connected for eigenvector centrality in directed graphs")
+                
             eigenvector = nx.eigenvector_centrality(self.G)
             top_nodes = sorted(eigenvector.items(), key=lambda x: x[1], reverse=True)[:10]
             
-            # Display results
-            result = "Eigenvector Centrality Top 10:\n" + "\n".join(
-                [f"{node}: {score:.4f}" for node, score in top_nodes]
-            )
-            
-            # Create visualization
             self.figure.clf()
             ax = self.figure.add_subplot(111)
-            
-            # Plot histogram of eigenvector centrality
             ax.hist(eigenvector.values(), bins=20, color='lightblue', edgecolor='black')
             ax.set_title("Eigenvector Centrality Distribution")
-            ax.set_xlabel("Eigenvector Centrality")
-            ax.set_ylabel("Count")
             
-            # Display statistics
-            avg_eigen = sum(eigenvector.values()) / len(eigenvector)
-            stats = (
-                f"Eigenvector Centrality Statistics:\n"
-                f"Average eigenvector centrality: {avg_eigen:.4f}\n\n"
-                f"Top 10 Nodes by Eigenvector Centrality:\n"
-            )
-            stats += "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
-            
+            result = "Top 10 Nodes:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
             self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, stats)
-            
+            self.output_text.insert(tk.END, result)
             self.canvas.draw()
-            messagebox.showinfo("Eigenvector Centrality Results", result)
-            self.log_message("Calculated eigenvector centrality")
             
         except Exception as e:
-            self.show_error("Error calculating eigenvector centrality", str(e))
-    
+            self.handle_error("Eigenvector Error", str(e))
+
     def plot_degree_distribution(self):
-        if self.G is None:
-            messagebox.showerror("Error", "No graph loaded")
-            return
-            
         try:
             degrees = [d for _, d in self.G.degree()]
             self.figure.clf()
             ax = self.figure.add_subplot(111)
-            
             ax.hist(degrees, bins=20, color='skyblue', edgecolor='black')
             ax.set_title("Degree Distribution")
-            ax.set_xlabel("Degree")
-            ax.set_ylabel("Count")
-            
             self.canvas.draw()
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to plot degree distribution: {str(e)}")
-    
+            self.handle_error("Degree Distribution Error", str(e))
+
     def calculate_path_length(self):
-        if self.G is None:
-            messagebox.showerror("Error", "No graph loaded")
-            return
-            
         try:
             if nx.is_connected(self.G):
                 avg_path = nx.average_shortest_path_length(self.G)
-                messagebox.showinfo("Path Length", f"Average Shortest Path Length: {avg_path:.3f}")
+                messagebox.showinfo("Path Length", f"Average Path Length: {avg_path:.3f}")
             else:
-                messagebox.showinfo("Path Length", "Graph is not connected - showing largest component")
                 largest_cc = max(nx.connected_components(self.G.to_undirected()), key=len)
                 subgraph = self.G.subgraph(largest_cc)
                 avg_path = nx.average_shortest_path_length(subgraph)
-                messagebox.showinfo("Path Length", f"Average Path in Largest Component: {avg_path:.3f}")
+                messagebox.showinfo("Path Length", f"Average in Largest Component: {avg_path:.3f}")
         except Exception as e:
-            messagebox.showerror("Error", f"Path length calculation failed: {str(e)}")
-    
-    def show_top_degrees(self):
-        """Display top 10 nodes by degree centrality"""
-        try:
-            if self.G is None:
-                messagebox.showerror("Error", "No graph loaded")
-                return
+            self.handle_error("Path Length Error", str(e))
 
+    def show_top_degrees(self):
+        try:
             degrees = dict(self.G.degree())
             sorted_degrees = sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:10]
-            
-            result = "Top 10 Nodes by Degree:\n"
-            result += "\n".join([f"{node}: {degree}" for node, degree in sorted_degrees])
-            
-            # Display in output text
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, result)
-            
+            result = "Top 10 Degrees:\n" + "\n".join([f"{node}: {degree}" for node, degree in sorted_degrees])
             messagebox.showinfo("Top Degrees", result)
-            self.log_message("Displayed top 10 degrees")
-            
         except Exception as e:
-            self.show_error("Error showing degrees", str(e))
+            self.handle_error("Degree Error", str(e))
 
     def show_top_closeness(self):
-        """Display top 10 nodes by closeness centrality"""
         try:
-            if self.G is None:
-                messagebox.showerror("Error", "No graph loaded")
-                return
-
             closeness = nx.closeness_centrality(self.G)
             sorted_closeness = sorted(closeness.items(), key=lambda x: x[1], reverse=True)[:10]
-            
-            result = "Top 10 Nodes by Closeness Centrality:\n"
-            result += "\n".join([f"{node}: {score:.4f}" for node, score in sorted_closeness])
-            
-            # Display in output text
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, result)
-            
+            result = "Top 10 Closeness:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in sorted_closeness])
             messagebox.showinfo("Top Closeness", result)
-            self.log_message("Displayed top 10 closeness centrality")
-            
         except Exception as e:
-            self.show_error("Error showing closeness", str(e))
+            self.handle_error("Closeness Error", str(e))
 
     def filter_centrality(self, centrality_type):
-        """Filter nodes based on centrality measure"""
         try:
-            if self.G is None:
-                messagebox.showerror("Error", "No graph loaded")
-                return
-                
+           
+            if not self.G.is_directed() and centrality_type in ['in_degree', 'out_degree']:
+                centrality_type = 'degree'
+            
+            metrics = {}
+            if self.G.is_directed():
+                metrics.update({
+                    'in_degree': dict(self.G.in_degree()),
+                    'out_degree': dict(self.G.out_degree()),
+                })
+            metrics.update({
+                'degree': dict(self.G.degree()),
+                'betweenness': nx.betweenness_centrality(self.G),
+                'closeness': nx.closeness_centrality(self.G),
+                'harmonic': nx.harmonic_centrality(self.G),
+                'eigenvector': nx.eigenvector_centrality(self.G)
+            })
+            
             threshold = self.filter_threshold.get()
-            
-            if centrality_type == 'degree':
-                centrality = dict(self.G.degree())
-                title = f"Nodes with Degree ≥ {threshold}"
-                color = '#4a6baf'
-            elif centrality_type == 'betweenness':
-                centrality = nx.betweenness_centrality(self.G)
-                title = f"Nodes with Betweenness Centrality ≥ {threshold}"
-                color = '#28a745'
-            elif centrality_type == 'closeness':
-                centrality = nx.closeness_centrality(self.G)
-                title = f"Nodes with Closeness Centrality ≥ {threshold}"
-                color = '#dc3545'
-            elif centrality_type == 'harmonic':
-                centrality = nx.harmonic_centrality(self.G)
-                title = f"Nodes with Harmonic Centrality ≥ {threshold}"
-                color = '#800080'
-            elif centrality_type == 'eigenvector':
-                centrality = nx.eigenvector_centrality(self.G)
-                title = f"Nodes with Eigenvector Centrality ≥ {threshold}"
-                color = '#FFA500'  # Orange color
-            else:
-                raise ValueError("Invalid centrality type")
-            
-            filtered_nodes = [n for n in self.G.nodes() if centrality[n] >= threshold]
+            filtered_nodes = [n for n in self.G.nodes if metrics[centrality_type][n] >= threshold]
             filtered_G = self.G.subgraph(filtered_nodes)
             
             self.figure.clf()
             ax = self.figure.add_subplot(111)
-            
-            pos = self.calculate_layout()
+            pos = self.layout_pos or self.calculate_layout()
             node_sizes = [float(self.size_scale.get()) * (1 + self.G.degree(n)) / 10 for n in filtered_nodes]
             
-            nx.draw_networkx_nodes(
-                filtered_G, pos,
-                node_color=color,
-                node_size=node_sizes,
-                ax=ax
-            )
-            
-            if self.directed_var.get():
-                nx.draw_networkx_edges(
-                    filtered_G, pos,
-                    arrows=True,
-                    ax=ax
-                )
-            else:
-                nx.draw_networkx_edges(
-                    filtered_G, pos,
-                    ax=ax
-                )
+            nx.draw_networkx_nodes(filtered_G, pos, node_size=node_sizes, ax=ax)
+            nx.draw_networkx_edges(filtered_G, pos, ax=ax, arrows=self.G.is_directed())
             
             if len(filtered_nodes) <= 50:
                 nx.draw_networkx_labels(filtered_G, pos, font_size=8, ax=ax)
             
-            plt.title(title, pad=20)
-            plt.axis('off')
-            
+            plt.title(f"Nodes with {centrality_type.capitalize()} ≥ {threshold}", pad=20)
             self.canvas.draw()
             
-            # Display centrality values in output
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, f"{title}\n\n")
-            for node in sorted(filtered_nodes, key=lambda x: centrality[x], reverse=True):
-                self.output_text.insert(tk.END, f"Node {node}: {centrality_type} = {centrality[node]:.1f}\n")
-            
-            self.log_message(f"Filtered by {centrality_type} (threshold={threshold})")
-            
         except Exception as e:
-            self.show_error("Error in centrality filtering", str(e))
+            self.handle_error("Filter Error", str(e))
 
     def show_conductance(self):
-        """Calculate and display conductance values"""
         try:
-            if self.G is None:
-                messagebox.showerror("Error", "No graph loaded")
-                return
-                
-            if not self.communities:
-                messagebox.showerror("Error", "Run community detection first")
-                return
-                
-            communities = defaultdict(list)
-            for node, comm_id in self.communities.items():
-                communities[comm_id].append(node)
-            
-            community_sets = [set(nodes) for nodes in communities.values()]
-            
+            community_sets = [set(nodes) for nodes in self.get_communities().values()]
             conductances = []
-            conductance_details = []
-            for i, comm in enumerate(community_sets):
-                if len(comm) == 0:
-                    continue
+            for comm in community_sets:
                 cut = nx.cut_size(self.G, comm)
                 volume = nx.volume(self.G, comm)
                 total = self.G.number_of_edges() * 2
-                conductance = cut / min(volume, total - volume) if min(volume, total - volume) != 0 else 0
-                conductances.append(conductance)
-                conductance_details.append(f"Community {i}: {conductance:.4f}")
+                if min(volume, total - volume) != 0:
+                    conductances.append(cut / min(volume, total - volume))
             
-            avg_conductance = np.mean(conductances)
-            message = "Conductance Values:\n\n" + "\n".join(conductance_details)
-            message += f"\n\nAverage Conductance: {avg_conductance:.4f}"
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, message)
-            messagebox.showinfo("Conductance Results", message)
-            self.log_message("Conductance values calculated")
-            
+            result = f"Average Conductance: {np.mean(conductances):.3f}"
+            messagebox.showinfo("Conductance", result)
         except Exception as e:
-            self.show_error("Error calculating conductance", str(e))
+            self.handle_error("Conductance Error", str(e))
 
     def show_modularity(self):
-        """Calculate and display modularity"""
         try:
-            if self.G is None:
-                messagebox.showerror("Error", "No graph loaded")
-                return
-                
-            if not self.communities:
-                messagebox.showerror("Error", "Run community detection first")
-                return
-                
-            communities = defaultdict(list)
-            for node, comm_id in self.communities.items():
-                communities[comm_id].append(node)
-            
-            community_sets = [set(nodes) for nodes in communities.values()]
-            
-            mod = nx.community.modularity(self.G, community_sets)
-            message = f"Modularity: {mod:.4f}\nNumber of communities: {len(communities)}"
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, message)
-            messagebox.showinfo("Modularity Results", message)
-            self.log_message(f"Modularity calculated: {mod:.4f}")
-            
+            modularity = nx.community.modularity(self.G, self.get_communities().values())
+            messagebox.showinfo("Modularity", f"Modularity Score: {modularity:.3f}")
         except Exception as e:
-            self.show_error("Error calculating modularity", str(e))
+            self.handle_error("Modularity Error", str(e))
 
     def show_nmi(self):
         try:
-            if self.G is None or not self.node_attributes or 'class' not in next(iter(self.node_attributes.values()), {}):
-                raise ValueError("Node data with ground truth classes is required")
-            
-            if not self.communities:
-                messagebox.showerror("Error", "Run community detection first")
-                return
-
-            ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
-            truth = [ground_truth[node] for node in self.G.nodes()]
-
-            # Handle communities as either dict or list of sets/lists
-            if isinstance(self.communities, dict):
-                detected = [self.communities[node] for node in self.G.nodes()]
-            elif isinstance(self.communities, (list, tuple)):
-                node_to_community = {}
-                for i, community in enumerate(self.communities):
-                    for node in community:
-                        node_to_community[node] = i
-                detected = [node_to_community[node] for node in self.G.nodes()]
-            else:
-                raise ValueError("Unrecognized format for communities")
-
-            nmi = normalized_mutual_info_score(truth, detected)
-            message = f"Normalized Mutual Information (NMI): {nmi:.4f}"
-
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, message)
-            messagebox.showinfo("NMI Results", message)
-            self.log_message(f"NMI calculated: {nmi:.4f}")
-
+            ground_truth = [data.get('class', 0) for _, data in self.G.nodes(data=True)]
+            detected = [self.communities[node] for node in self.G.nodes]
+            nmi = normalized_mutual_info_score(ground_truth, detected)
+            messagebox.showinfo("NMI", f"Normalized Mutual Information: {nmi:.3f}")
         except Exception as e:
-            self.show_error("Error calculating NMI", str(e))
+            self.handle_error("NMI Error", str(e))
 
-  
-       
     def show_harmonic_centrality(self):
-        """Calculate and display harmonic centrality for each node"""
         try:
-            if self.G is None:
-                messagebox.showerror("Error", "No graph loaded")
-                return
-                
             harmonic = nx.harmonic_centrality(self.G)
-            sorted_nodes = sorted(harmonic.items(), key=lambda x: x[1], reverse=True)
-            top_nodes = "\n".join([f"Node {node}: {centrality:.4f}" for node, centrality in sorted_nodes[:5]])
-            avg_harmonic = sum(harmonic.values()) / len(harmonic)
-            message = f"Top 5 Nodes:\n{top_nodes}\n\nAverage Harmonic Centrality: {avg_harmonic:.4f}"
-            
-            full_output = "Harmonic Centrality Scores:\n\n" + "\n".join(
-                [f"Node {node}: {centrality:.4f}" for node, centrality in sorted_nodes]
-            ) + f"\n\nAverage: {avg_harmonic:.4f}"
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, full_output)
-            messagebox.showinfo("Harmonic Centrality Results", message)
-            self.log_message("Harmonic centrality calculated")
-            
+            sorted_nodes = sorted(harmonic.items(), key=lambda x: x[1], reverse=True)[:10]
+            result = "Top 10 Harmonic Centrality:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in sorted_nodes])
+            messagebox.showinfo("Harmonic Centrality", result)
         except Exception as e:
-            self.show_error("Error calculating harmonic centrality", str(e))
+            self.handle_error("Harmonic Error", str(e))
 
-   
-    def visualize_metric_distribution(self, metric_name):
-        """Create visualization for a specific metric distribution"""
-        if self.G is None:
-            self.show_error("Error", "No graph loaded")
-            return
-        
-        try:
-            # Get the appropriate metric data
-            if metric_name == "degree":
-                values = dict(self.G.degree()).values()
-                title = "Degree Distribution"
-                xlabel = "Degree"
-            elif metric_name == "betweenness":
-                values = nx.betweenness_centrality(self.G).values()
-                title = "Betweenness Centrality Distribution"
-                xlabel = "Betweenness Centrality"
-            elif metric_name == "closeness":
-                values = nx.closeness_centrality(self.G).values()
-                title = "Closeness Centrality Distribution"
-                xlabel = "Closeness Centrality"
-            elif metric_name == "clustering":
-                values = nx.clustering(self.G).values()
-                title = "Clustering Coefficient Distribution"
-                xlabel = "Clustering Coefficient"
-            else:
-                self.show_error("Error", "Invalid metric name")
-                return
-            
-            # Create visualization
-            self.figure.clf()
-            ax = self.figure.add_subplot(111)
-            
-            # Plot histogram
-            ax.hist(values, bins=20, color='skyblue', edgecolor='black')
-            ax.set_title(title)
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Count")
-            
-            # Calculate and display statistics
-            values_list = list(values)
-            stats = (
-                f"{title} Statistics:\n"
-                f"Mean: {np.mean(values_list):.4f}\n"
-                f"Median: {np.median(values_list):.4f}\n"
-                f"Standard deviation: {np.std(values_list):.4f}\n"
-                f"Minimum: {min(values_list):.4f}\n"
-                f"Maximum: {max(values_list):.4f}"
-            )
-            
-            # Add stats to plot
-            ax.text(0.95, 0.95, stats, transform=ax.transAxes,
-                    verticalalignment='top', horizontalalignment='right',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-            
-            self.canvas.draw()
-            
-            # Also show in output
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, stats)
-            self.log_message(f"Displayed {metric_name} distribution")
-            
-        except Exception as e:
-            self.show_error("Visualization Error", str(e))
-
-    def run_louvain(self):
-        """Run Louvain algorithm and return partition"""
-        try:
-            return best_partition(self.G.to_undirected())
-        except Exception as e:
-            self.show_error("Louvain Error", str(e))
-            return {}
-
-    def run_girvan_newman(self):
-        """Run Girvan-Newman algorithm and return first partition"""
-        try:
-            communities = nx.community.girvan_newman(self.G.to_undirected())
-            first_partition = next(communities)
-            return {node: i for i, comm in enumerate(first_partition) for node in comm}
-        except StopIteration:
-            self.show_error("Girvan-Newman Error", "No partitions generated")
-            return {}
-        except Exception as e:
-            self.show_error("Girvan-Newman Error", str(e))
-            return {}
-
-    def compare_community_algorithms(self):
-        """Main comparison function"""
-        if self.G is None:
-            self.show_error("Error", "Load a graph first")
-            return
-        
-        try:
-            # Create undirected copy for community detection
-            undirected_graph = self.G.to_undirected()
-            
-            # Get partitions
-            louvain_part = self.run_louvain()
-            girvan_part = self.run_girvan_newman()
-            
-            if not louvain_part or not girvan_part:
-                return
-            
-            # Calculate metrics using undirected graph copy
-            l_metrics = self.compute_community_metrics(louvain_part, undirected_graph)
-            g_metrics = self.compute_community_metrics(girvan_part, undirected_graph)
-
-            # Create comparison window
-            top = tk.Toplevel(self.root)
-            top.title("Algorithm Comparison")
-            top.geometry("680x300")
-            
-            # Main frame with grid layout
-            main_frame = ttk.Frame(top, padding=15)
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Configure grid weights
-            main_frame.grid_columnconfigure(1, weight=1)
-            main_frame.grid_columnconfigure(2, weight=1)
-            
-            # Header
-            ttk.Label(main_frame, text="Metric", font=('Arial', 10, 'bold')).grid(
-                row=0, column=0, sticky='w', padx=5, pady=2)
-            ttk.Label(main_frame, text="Louvain", font=('Arial', 10, 'bold')).grid(
-                row=0, column=1, sticky='w', padx=5, pady=2)
-            ttk.Label(main_frame, text="Girvan-Newman", font=('Arial', 10, 'bold')).grid(
-                row=0, column=2, sticky='w', padx=5, pady=2)
-
-            # Metrics to display
-            metrics = [
-                ('Number of Communities', 'num_communities', 'd'),
-                ('Modularity Score', 'modularity', '.3f'),
-                ('Average Conductance', 'conductance', '.3f'),
-                ('Normalized MI', 'nmi', '.3f'),
-               
-            ]
-
-            # Populate metrics
-            for row, (label, key, fmt) in enumerate(metrics, 1):
-                ttk.Label(main_frame, text=label).grid(
-                    row=row, column=0, sticky='w', padx=5, pady=2)
-                
-                # Louvain value
-                l_val = l_metrics.get(key)
-                l_text = f"{l_val:{fmt}}" if l_val is not None else "N/A"
-                ttk.Label(main_frame, text=l_text).grid(
-                    row=row, column=1, sticky='w', padx=5, pady=2)
-                
-                # Girvan value
-                g_val = g_metrics.get(key)
-                g_text = f"{g_val:{fmt}}" if g_val is not None else "N/A"
-                ttk.Label(main_frame, text=g_text).grid(
-                    row=row, column=2, sticky='w', padx=5, pady=2)
-
-            # Close button
-            close_btn = ttk.Button(top, text="Close", command=top.destroy)
-            close_btn.pack(pady=10)
-
-            # Bring window to front
-            top.lift()
-            top.attributes('-topmost', True)
-            top.after_idle(top.attributes, '-topmost', False)
-
-        except Exception as e:
-            self.show_error("Comparison Error", f"Failed to create comparison: {str(e)}")
-            print(traceback.format_exc())
-
-    def compute_community_metrics(self, partition, undirected_graph):
-        """Calculate metrics for a given partition using undirected graph"""
-        metrics = {}
-        communities = defaultdict(list)
-        
-        try:
-            for node, comm_id in partition.items():
-                communities[comm_id].append(node)
-            
-            community_sets = [set(nodes) for nodes in communities.values()]
-            metrics['num_communities'] = len(communities)
-
-            # Modularity calculation
-            try:
-                metrics['modularity'] = nx.community.modularity(
-                    undirected_graph, community_sets)
-            except Exception as e:
-                metrics['modularity'] = None
-
-            # Conductance calculation
-            conductances = []
-            for comm in community_sets:
-                try:
-                    if len(comm) == 0 or len(comm) == undirected_graph.number_of_nodes():
-                        continue
-                    
-                    cut = nx.cut_size(undirected_graph, comm)
-                    volume = nx.volume(undirected_graph, comm)
-                    total = 2 * undirected_graph.number_of_edges()  # For undirected
-                    
-                    if volume == 0 or (total - volume) == 0:
-                        continue
-                        
-                    conductance = cut / min(volume, total - volume)
-                    conductances.append(conductance)
-                except:
-                    continue
-            
-            metrics['conductance'] = np.mean(conductances) if conductances else None
-
-            # NMI and ARI calculations
-            metrics['nmi'] = None
-         
-            if hasattr(self, 'node_attributes') and 'class' in next(iter(self.node_attributes.values()), {}):
-                try:
-                    ground_truth = {node: data.get('class', 0) 
-                                   for node, data in undirected_graph.nodes(data=True)}
-                    truth = [ground_truth[node] for node in undirected_graph.nodes()]
-                    detected = [partition[node] for node in undirected_graph.nodes()]
-                    metrics['nmi'] = normalized_mutual_info_score(truth, detected)
-                   
-                except Exception as e:
-                    pass
-
-        except Exception as e:
-            self.show_error("Metric Calculation Error", str(e))
-            print(traceback.format_exc())
-
-        return metrics
-        
     def clear_all(self):
-        """Clear all data and visualizations"""
-        self.figure.clear()
+        self.figure.clf()
         self.canvas.draw()
         self.output_text.delete(1.0, tk.END)
         self.node_attributes = {}
@@ -1139,12 +633,33 @@ class SocialNetworkAnalyzer:
         self.communities = {}
         self.log_message("All data cleared")
 
+    def get_communities(self):
+        communities = defaultdict(list)
+        for node, comm_id in self.communities.items():
+            communities[comm_id].append(node)
+        return communities
+
+    def force_new_layout(self):
+        self.layout_pos = None
+        self.update_visualization()
+
+    def choose_node_color(self):
+        color = colorchooser.askcolor(initialcolor=self.custom_color)
+        if color[1]:
+            self.custom_color = color[1]
+            self.color_preview.config(bg=self.custom_color)
+            self.update_visualization()  # Force immediate update
+
+    def run_girvan_newman(self):
+        communities = nx.community.girvan_newman(self.G.to_undirected())
+        return {node: i for i, comm in enumerate(next(communities)) for node in comm}
+
 if __name__ == "__main__":
     try:
         root = tk.Tk()
         app = SocialNetworkAnalyzer(root)
         root.mainloop()
     except Exception as e:
-        error_msg = f"Unhandled exception: {str(e)}\n{traceback.format_exc()}"
-        messagebox.showerror("Critical Error", error_msg)
+        error_msg = f"Critical Error: {str(e)}\n{traceback.format_exc()}"
+        messagebox.showerror("Fatal Error", error_msg)
         sys.exit(1)

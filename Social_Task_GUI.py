@@ -416,8 +416,7 @@ class SocialNetworkAnalyzer:
             result += "\n".join([f"{node}: {score:.3f}" for node, score in top_nodes])
             messagebox.showinfo("Clustering Results", result)
         except Exception as e:
-            messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
-    
+            messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")   
     def plot_degree_distribution(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
