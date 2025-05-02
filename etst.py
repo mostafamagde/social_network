@@ -170,6 +170,8 @@ class SocialNetworkAnalyzer:
                   command=lambda: self.run_community_detection("louvain")).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Run Girvan-Newman Community Detection", 
                   command=lambda: self.run_community_detection("girvan")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Compare Community Algorithms", 
+                  command=self.compare_community_algorithms).pack(fill=tk.X, pady=2)
         
         ttk.Button(frame, text="Calculate PageRank", command=self.calculate_pagerank).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
@@ -839,6 +841,169 @@ class SocialNetworkAnalyzer:
             
         except Exception as e:
             self.show_error("Error calculating harmonic centrality", str(e))
+
+    def run_louvain(self):
+        """Run Louvain algorithm and return partition"""
+        try:
+            return best_partition(self.G.to_undirected())
+        except Exception as e:
+            self.show_error("Louvain Error", str(e))
+            return {}
+
+    def run_girvan_newman(self):
+        """Run Girvan-Newman algorithm and return first partition"""
+        try:
+            communities = nx.community.girvan_newman(self.G.to_undirected())
+            first_partition = next(communities)
+            return {node: i for i, comm in enumerate(first_partition) for node in comm}
+        except StopIteration:
+            self.show_error("Girvan-Newman Error", "No partitions generated")
+            return {}
+        except Exception as e:
+            self.show_error("Girvan-Newman Error", str(e))
+            return {}
+
+    def compare_community_algorithms(self):
+        """Main comparison function"""
+        if self.G is None:
+            self.show_error("Error", "Load a graph first")
+            return
+        
+        try:
+            # Create undirected copy for community detection
+            undirected_graph = self.G.to_undirected()
+            
+            # Get partitions
+            louvain_part = self.run_louvain()
+            girvan_part = self.run_girvan_newman()
+            
+            if not louvain_part or not girvan_part:
+                return
+            
+            # Calculate metrics using undirected graph copy
+            l_metrics = self.compute_community_metrics(louvain_part, undirected_graph)
+            g_metrics = self.compute_community_metrics(girvan_part, undirected_graph)
+
+            # Create comparison window
+            top = tk.Toplevel(self.root)
+            top.title("Algorithm Comparison")
+            top.geometry("680x300")
+            
+            # Main frame with grid layout
+            main_frame = ttk.Frame(top, padding=15)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Configure grid weights
+            main_frame.grid_columnconfigure(1, weight=1)
+            main_frame.grid_columnconfigure(2, weight=1)
+            
+            # Header
+            ttk.Label(main_frame, text="Metric", font=('Arial', 10, 'bold')).grid(
+                row=0, column=0, sticky='w', padx=5, pady=2)
+            ttk.Label(main_frame, text="Louvain", font=('Arial', 10, 'bold')).grid(
+                row=0, column=1, sticky='w', padx=5, pady=2)
+            ttk.Label(main_frame, text="Girvan-Newman", font=('Arial', 10, 'bold')).grid(
+                row=0, column=2, sticky='w', padx=5, pady=2)
+
+            # Metrics to display
+            metrics = [
+                ('Number of Communities', 'num_communities', 'd'),
+                ('Modularity Score', 'modularity', '.3f'),
+                ('Average Conductance', 'conductance', '.3f'),
+                ('Normalized MI', 'nmi', '.3f'),
+                ('Adjusted RI', 'ari', '.3f')
+            ]
+
+            # Populate metrics
+            for row, (label, key, fmt) in enumerate(metrics, 1):
+                ttk.Label(main_frame, text=label).grid(
+                    row=row, column=0, sticky='w', padx=5, pady=2)
+                
+                # Louvain value
+                l_val = l_metrics.get(key)
+                l_text = f"{l_val:{fmt}}" if l_val is not None else "N/A"
+                ttk.Label(main_frame, text=l_text).grid(
+                    row=row, column=1, sticky='w', padx=5, pady=2)
+                
+                # Girvan value
+                g_val = g_metrics.get(key)
+                g_text = f"{g_val:{fmt}}" if g_val is not None else "N/A"
+                ttk.Label(main_frame, text=g_text).grid(
+                    row=row, column=2, sticky='w', padx=5, pady=2)
+
+            # Close button
+            close_btn = ttk.Button(top, text="Close", command=top.destroy)
+            close_btn.pack(pady=10)
+
+            # Bring window to front
+            top.lift()
+            top.attributes('-topmost', True)
+            top.after_idle(top.attributes, '-topmost', False)
+
+        except Exception as e:
+            self.show_error("Comparison Error", f"Failed to create comparison: {str(e)}")
+            print(traceback.format_exc())
+
+    def compute_community_metrics(self, partition, undirected_graph):
+        """Calculate metrics for a given partition using undirected graph"""
+        metrics = {}
+        communities = defaultdict(list)
+        
+        try:
+            for node, comm_id in partition.items():
+                communities[comm_id].append(node)
+            
+            community_sets = [set(nodes) for nodes in communities.values()]
+            metrics['num_communities'] = len(communities)
+
+            # Modularity calculation
+            try:
+                metrics['modularity'] = nx.community.modularity(
+                    undirected_graph, community_sets)
+            except Exception as e:
+                metrics['modularity'] = None
+
+            # Conductance calculation
+            conductances = []
+            for comm in community_sets:
+                try:
+                    if len(comm) == 0 or len(comm) == undirected_graph.number_of_nodes():
+                        continue
+                    
+                    cut = nx.cut_size(undirected_graph, comm)
+                    volume = nx.volume(undirected_graph, comm)
+                    total = 2 * undirected_graph.number_of_edges()  # For undirected
+                    
+                    if volume == 0 or (total - volume) == 0:
+                        continue
+                        
+                    conductance = cut / min(volume, total - volume)
+                    conductances.append(conductance)
+                except:
+                    continue
+            
+            metrics['conductance'] = np.mean(conductances) if conductances else None
+
+            # NMI and ARI calculations
+            metrics['nmi'] = None
+            metrics['ari'] = None
+            if hasattr(self, 'node_attributes') and 'class' in next(iter(self.node_attributes.values()), {}):
+                try:
+                    ground_truth = {node: data.get('class', 0) 
+                                   for node, data in undirected_graph.nodes(data=True)}
+                    truth = [ground_truth[node] for node in undirected_graph.nodes()]
+                    detected = [partition[node] for node in undirected_graph.nodes()]
+                    metrics['nmi'] = normalized_mutual_info_score(truth, detected)
+                    metrics['ari'] = adjusted_rand_score(truth, detected)
+                except Exception as e:
+                    pass
+
+        except Exception as e:
+            self.show_error("Metric Calculation Error", str(e))
+            print(traceback.format_exc())
+
+        return metrics
+        
 
     def clear_all(self):
         """Clear all data and visualizations"""
