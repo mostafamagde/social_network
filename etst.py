@@ -177,9 +177,12 @@ class SocialNetworkAnalyzer:
         ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Clustering Coefficients", command=self.calculate_clustering).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Degree Distribution", command=self.plot_degree_distribution).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Calculate Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate average Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Top 10 Degrees", command=self.show_top_degrees).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Top 10 Closeness", command=self.show_top_closeness).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Visualize Betweenness Distribution", command=lambda: self.visualize_metric_distribution("betweenness")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Visualize Closeness Distribution", command=lambda: self.visualize_metric_distribution("closeness")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Visualize Clustering Distribution", command=lambda: self.visualize_metric_distribution("clustering")).pack(fill=tk.X, pady=2)
         
     def setup_filter_controls(self):
         frame = ttk.LabelFrame(self.control_frame, text="Centrality Filters", padding=10)
@@ -522,11 +525,35 @@ class SocialNetworkAnalyzer:
         try:
             clustering = nx.clustering(self.G)
             avg_clustering = nx.average_clustering(self.G)
-            result = f"Average Clustering Coefficient: {avg_clustering:.3f}\n\n"
-            result += "Top 10 Nodes by Clustering:\n"
+            transitivity = nx.transitivity(self.G)
+            
             top_nodes = sorted(clustering.items(), key=lambda x: x[1], reverse=True)[:10]
-            result += "\n".join([f"{node}: {score:.3f}" for node, score in top_nodes])
-            messagebox.showinfo("Clustering Results", result)
+            
+            # Create visualization
+            self.figure.clf()
+            ax = self.figure.add_subplot(111)
+            
+            # Plot histogram of clustering coefficients
+            ax.hist(clustering.values(), bins=20, color='lightgreen', edgecolor='black')
+            ax.set_title("Clustering Coefficient Distribution")
+            ax.set_xlabel("Clustering Coefficient")
+            ax.set_ylabel("Count")
+            
+            # Display statistics
+            stats = (
+                f"Clustering Statistics:\n"
+                f"Average clustering coefficient: {avg_clustering:.4f}\n"
+                f"Global clustering (transitivity): {transitivity:.4f}\n\n"
+                f"Top 10 Nodes by Clustering:\n"
+            )
+            stats += "\n".join([f"{node}: {coeff:.4f}" for node, coeff in top_nodes])
+            
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, stats)
+            
+            self.canvas.draw()
+            self.log_message("Calculated clustering coefficients")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
     
@@ -841,6 +868,71 @@ class SocialNetworkAnalyzer:
             
         except Exception as e:
             self.show_error("Error calculating harmonic centrality", str(e))
+
+   
+    def visualize_metric_distribution(self, metric_name):
+        """Create visualization for a specific metric distribution"""
+        if self.G is None:
+            self.show_error("Error", "No graph loaded")
+            return
+        
+        try:
+            # Get the appropriate metric data
+            if metric_name == "degree":
+                values = dict(self.G.degree()).values()
+                title = "Degree Distribution"
+                xlabel = "Degree"
+            elif metric_name == "betweenness":
+                values = nx.betweenness_centrality(self.G).values()
+                title = "Betweenness Centrality Distribution"
+                xlabel = "Betweenness Centrality"
+            elif metric_name == "closeness":
+                values = nx.closeness_centrality(self.G).values()
+                title = "Closeness Centrality Distribution"
+                xlabel = "Closeness Centrality"
+            elif metric_name == "clustering":
+                values = nx.clustering(self.G).values()
+                title = "Clustering Coefficient Distribution"
+                xlabel = "Clustering Coefficient"
+            else:
+                self.show_error("Error", "Invalid metric name")
+                return
+            
+            # Create visualization
+            self.figure.clf()
+            ax = self.figure.add_subplot(111)
+            
+            # Plot histogram
+            ax.hist(values, bins=20, color='skyblue', edgecolor='black')
+            ax.set_title(title)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Count")
+            
+            # Calculate and display statistics
+            values_list = list(values)
+            stats = (
+                f"{title} Statistics:\n"
+                f"Mean: {np.mean(values_list):.4f}\n"
+                f"Median: {np.median(values_list):.4f}\n"
+                f"Standard deviation: {np.std(values_list):.4f}\n"
+                f"Minimum: {min(values_list):.4f}\n"
+                f"Maximum: {max(values_list):.4f}"
+            )
+            
+            # Add stats to plot
+            ax.text(0.95, 0.95, stats, transform=ax.transAxes,
+                    verticalalignment='top', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            self.canvas.draw()
+            
+            # Also show in output
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, stats)
+            self.log_message(f"Displayed {metric_name} distribution")
+            
+        except Exception as e:
+            self.show_error("Visualization Error", str(e))
 
     def run_louvain(self):
         """Run Louvain algorithm and return partition"""
