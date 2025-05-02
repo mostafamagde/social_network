@@ -479,25 +479,29 @@ class SocialNetworkAnalyzer:
         except Exception as e:
             messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
     def calculate_eigenvector(self):
-        try:
-            if self.G.is_directed() and not nx.is_strongly_connected(self.G):
-                raise ValueError("Graph must be strongly connected for eigenvector centrality in directed graphs")
-                
-            eigenvector = nx.eigenvector_centrality(self.G)
-            top_nodes = sorted(eigenvector.items(), key=lambda x: x[1], reverse=True)[:10]
-            
-            self.figure.clf()
-            ax = self.figure.add_subplot(111)
-            ax.hist(eigenvector.values(), bins=20, color='lightblue', edgecolor='black')
-            ax.set_title("Eigenvector Centrality Distribution")
-            
-            result = "Top 10 Nodes:\n" + "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, result)
-            self.canvas.draw()
-            
-        except Exception as e:
-            self.handle_error("Eigenvector Error", str(e))
+     try:
+        if self.G.is_directed() and not nx.is_strongly_connected(self.G):
+            raise ValueError("Graph must be strongly connected for eigenvector centrality in directed graphs")
+        
+        eigenvector = nx.eigenvector_centrality(self.G)
+        top_nodes = sorted(eigenvector.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        # Create visualization
+        self.figure.clf()
+        ax = self.figure.add_subplot(111)
+        ax.hist(eigenvector.values(), bins=20, color='lightblue', edgecolor='black')
+        ax.set_title("Eigenvector Centrality Distribution")
+        self.canvas.draw()
+        
+        # Create message for messagebox
+        result = "Top 10 Eigenvector Centrality Scores:\n"
+        result += "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
+        
+        # Show in messagebox
+        messagebox.showinfo("Eigenvector Centrality Results", result)
+        
+     except Exception as e:
+        self.handle_error("Eigenvector Error", str(e))
 
     def plot_degree_distribution(self):
         try:
