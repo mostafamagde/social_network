@@ -137,7 +137,7 @@ class SocialNetworkAnalyzer:
         # Color mapping selection
         self.color_var = tk.StringVar(value="manual")
         ttk.Combobox(frame, textvariable=self.color_var, 
-                     values=["manual", "community", "degree", "betweenness", "pagerank"]).pack(fill=tk.X)
+                     values=["manual", "community", "degree", "betweenness", "pagerank", "eigenvector"]).pack(fill=tk.X)
         
         # Shape controls
         ttk.Label(frame, text="Node Shape:").pack(anchor=tk.W)
@@ -176,6 +176,7 @@ class SocialNetworkAnalyzer:
         ttk.Button(frame, text="Calculate PageRank", command=self.calculate_pagerank).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Betweenness Centrality", command=self.calculate_betweenness).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate Clustering Coefficients", command=self.calculate_clustering).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Calculate Eigenvector Centrality", command=self.calculate_eigenvector).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Degree Distribution", command=self.plot_degree_distribution).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Calculate average Path Length", command=self.calculate_path_length).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Top 10 Degrees", command=self.show_top_degrees).pack(fill=tk.X, pady=2)
@@ -199,6 +200,8 @@ class SocialNetworkAnalyzer:
                   command=lambda: self.filter_centrality('closeness')).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Filter by Harmonic", 
                   command=lambda: self.filter_centrality('harmonic')).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="Filter by Eigenvector", 
+                  command=lambda: self.filter_centrality('eigenvector')).pack(fill=tk.X, pady=2)
         
     def setup_metrics_controls(self):
         frame = ttk.LabelFrame(self.control_frame, text="Metrics", padding=10)
@@ -207,7 +210,7 @@ class SocialNetworkAnalyzer:
         ttk.Button(frame, text="Show Conductance", command=self.show_conductance).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show Modularity", command=self.show_modularity).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Show NMI", command=self.show_nmi).pack(fill=tk.X, pady=2)
-        ttk.Button(frame, text="Show ARI", command=self.show_ari).pack(fill=tk.X, pady=2)
+      
         ttk.Button(frame, text="Show Harmonic Centrality", command=self.show_harmonic_centrality).pack(fill=tk.X, pady=2)
         ttk.Button(frame, text="Clear All", command=self.clear_all).pack(fill=tk.X, pady=5)
         
@@ -349,6 +352,9 @@ class SocialNetworkAnalyzer:
         elif color_by == "pagerank":
             pagerank = nx.pagerank(self.G)
             return [pagerank[node] for node in self.G.nodes()]
+        elif color_by == "eigenvector":
+            eigenvector = nx.eigenvector_centrality(self.G)
+            return [eigenvector[node] for node in self.G.nodes()]
         else:
             return self.custom_color
     
@@ -557,6 +563,51 @@ class SocialNetworkAnalyzer:
         except Exception as e:
             messagebox.showerror("Error", f"Clustering calculation failed: {str(e)}")
     
+    def calculate_eigenvector(self):
+        """Calculate and display eigenvector centrality"""
+        if self.G is None:
+            messagebox.showerror("Error", "No graph loaded")
+            return
+            
+        try:
+            # Calculate eigenvector centrality
+            eigenvector = nx.eigenvector_centrality(self.G)
+            top_nodes = sorted(eigenvector.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            # Display results
+            result = "Eigenvector Centrality Top 10:\n" + "\n".join(
+                [f"{node}: {score:.4f}" for node, score in top_nodes]
+            )
+            
+            # Create visualization
+            self.figure.clf()
+            ax = self.figure.add_subplot(111)
+            
+            # Plot histogram of eigenvector centrality
+            ax.hist(eigenvector.values(), bins=20, color='lightblue', edgecolor='black')
+            ax.set_title("Eigenvector Centrality Distribution")
+            ax.set_xlabel("Eigenvector Centrality")
+            ax.set_ylabel("Count")
+            
+            # Display statistics
+            avg_eigen = sum(eigenvector.values()) / len(eigenvector)
+            stats = (
+                f"Eigenvector Centrality Statistics:\n"
+                f"Average eigenvector centrality: {avg_eigen:.4f}\n\n"
+                f"Top 10 Nodes by Eigenvector Centrality:\n"
+            )
+            stats += "\n".join([f"{node}: {score:.4f}" for node, score in top_nodes])
+            
+            self.output_text.delete(1.0, tk.END)
+            self.output_text.insert(tk.END, stats)
+            
+            self.canvas.draw()
+            messagebox.showinfo("Eigenvector Centrality Results", result)
+            self.log_message("Calculated eigenvector centrality")
+            
+        except Exception as e:
+            self.show_error("Error calculating eigenvector centrality", str(e))
+    
     def plot_degree_distribution(self):
         if self.G is None:
             messagebox.showerror("Error", "No graph loaded")
@@ -665,6 +716,10 @@ class SocialNetworkAnalyzer:
                 centrality = nx.harmonic_centrality(self.G)
                 title = f"Nodes with Harmonic Centrality ≥ {threshold}"
                 color = '#800080'
+            elif centrality_type == 'eigenvector':
+                centrality = nx.eigenvector_centrality(self.G)
+                title = f"Nodes with Eigenvector Centrality ≥ {threshold}"
+                color = '#FFA500'  # Orange color
             else:
                 raise ValueError("Invalid centrality type")
             
@@ -819,31 +874,8 @@ class SocialNetworkAnalyzer:
         except Exception as e:
             self.show_error("Error calculating NMI", str(e))
 
-    def show_ari(self):
-        """Calculate and display Adjusted Rand Index"""
-        try:
-            if self.G is None or not self.node_attributes or 'class' not in next(iter(self.node_attributes.values()), {}):
-                raise ValueError("Node data with ground truth classes is required")
-                
-            if not self.communities:
-                messagebox.showerror("Error", "Run community detection first")
-                return
-                
-            ground_truth = {node: data.get('class', 0) for node, data in self.G.nodes(data=True)}
-            detected = [self.communities[node] for node in self.G.nodes()]
-            truth = [ground_truth[node] for node in self.G.nodes()]
-            
-            ari = adjusted_rand_score(truth, detected)
-            message = f"Adjusted Rand Index (ARI): {ari:.4f}"
-            
-            self.output_text.delete(1.0, tk.END)
-            self.output_text.insert(tk.END, message)
-            messagebox.showinfo("ARI Results", message)
-            self.log_message(f"ARI calculated: {ari:.4f}")
-            
-        except Exception as e:
-            self.show_error("Error calculating ARI", str(e))
-
+  
+       
     def show_harmonic_centrality(self):
         """Calculate and display harmonic centrality for each node"""
         try:
@@ -1003,7 +1035,7 @@ class SocialNetworkAnalyzer:
                 ('Modularity Score', 'modularity', '.3f'),
                 ('Average Conductance', 'conductance', '.3f'),
                 ('Normalized MI', 'nmi', '.3f'),
-                ('Adjusted RI', 'ari', '.3f')
+               
             ]
 
             # Populate metrics
@@ -1078,7 +1110,7 @@ class SocialNetworkAnalyzer:
 
             # NMI and ARI calculations
             metrics['nmi'] = None
-            metrics['ari'] = None
+         
             if hasattr(self, 'node_attributes') and 'class' in next(iter(self.node_attributes.values()), {}):
                 try:
                     ground_truth = {node: data.get('class', 0) 
@@ -1086,7 +1118,7 @@ class SocialNetworkAnalyzer:
                     truth = [ground_truth[node] for node in undirected_graph.nodes()]
                     detected = [partition[node] for node in undirected_graph.nodes()]
                     metrics['nmi'] = normalized_mutual_info_score(truth, detected)
-                    metrics['ari'] = adjusted_rand_score(truth, detected)
+                   
                 except Exception as e:
                     pass
 
@@ -1096,7 +1128,6 @@ class SocialNetworkAnalyzer:
 
         return metrics
         
-
     def clear_all(self):
         """Clear all data and visualizations"""
         self.figure.clear()
