@@ -546,45 +546,75 @@ class SocialNetworkAnalyzer:
             self.handle_error("Closeness Error", str(e))
 
     def filter_centrality(self, centrality_type):
-        try:
-           
-            if not self.G.is_directed() and centrality_type in ['in_degree', 'out_degree']:
+     try:
+        # Validate centrality type
+        valid_centralities = ['degree', 'betweenness', 'closeness', 'harmonic', 'eigenvector']
+        if self.G.is_directed():
+            valid_centralities.extend(['in_degree', 'out_degree'])
+        else:
+            if centrality_type in ['in_degree', 'out_degree']:
                 centrality_type = 'degree'
-            
-            metrics = {}
-            if self.G.is_directed():
-                metrics.update({
-                    'in_degree': dict(self.G.in_degree()),
-                    'out_degree': dict(self.G.out_degree()),
-                })
+
+        if centrality_type not in valid_centralities:
+            raise ValueError(f"Invalid centrality type: {centrality_type}. Valid options: {valid_centralities}")
+
+        # Compute centrality metrics
+        metrics = {}
+        if self.G.is_directed():
             metrics.update({
-                'degree': dict(self.G.degree()),
-                'betweenness': nx.betweenness_centrality(self.G),
-                'closeness': nx.closeness_centrality(self.G),
-                'harmonic': nx.harmonic_centrality(self.G),
-                'eigenvector': nx.eigenvector_centrality(self.G)
+                'in_degree': dict(self.G.in_degree()),
+                'out_degree': dict(self.G.out_degree()),
             })
-            
-            threshold = self.filter_threshold.get()
-            filtered_nodes = [n for n in self.G.nodes if metrics[centrality_type][n] >= threshold]
-            filtered_G = self.G.subgraph(filtered_nodes)
-            
-            self.figure.clf()
-            ax = self.figure.add_subplot(111)
-            pos = self.layout_pos or self.calculate_layout()
-            node_sizes = [float(self.size_scale.get()) * (1 + self.G.degree(n)) / 10 for n in filtered_nodes]
-            
-            nx.draw_networkx_nodes(filtered_G, pos, node_size=node_sizes, ax=ax)
-            nx.draw_networkx_edges(filtered_G, pos, ax=ax, arrows=self.G.is_directed())
-            
-            if len(filtered_nodes) <= 50:
-                nx.draw_networkx_labels(filtered_G, pos, font_size=8, ax=ax)
-            
-            plt.title(f"Nodes with {centrality_type.capitalize()} ≥ {threshold}", pad=20)
-            self.canvas.draw()
-            
-        except Exception as e:
-            self.handle_error("Filter Error", str(e))
+        metrics.update({
+            'degree': dict(self.G.degree()),
+            'betweenness': nx.betweenness_centrality(self.G),
+            'closeness': nx.closeness_centrality(self.G),
+            'harmonic': nx.harmonic_centrality(self.G),
+        })
+
+        # Use numpy-based eigenvector centrality for directed graphs to handle non-convergence
+        try:
+            if self.G.is_directed():
+                metrics['eigenvector'] = nx.eigenvector_centrality_numpy(self.G)
+            else:
+                metrics['eigenvector'] = nx.eigenvector_centrality(self.G)
+        except nx.NetworkXException as e:
+            raise ValueError("Eigenvector centrality failed. Ensure the graph is strongly connected or try a different metric.") from e
+
+        # Get threshold and filter nodes
+        threshold = self.filter_threshold.get()
+        filtered_nodes = [n for n in self.G.nodes if metrics[centrality_type][n] >= threshold]
+        if not filtered_nodes:
+            raise ValueError(f"No nodes have {centrality_type} ≥ {threshold}")
+
+        filtered_G = self.G.subgraph(filtered_nodes)
+
+        # Visualization
+        self.figure.clf()
+        ax = self.figure.add_subplot(111)
+        pos = self.layout_pos or self.calculate_layout()
+
+        # Use the same centrality metric for node sizes
+        node_sizes = [float(self.size_scale.get()) * (1 + metrics[centrality_type][n]) / 10 for n in filtered_nodes]
+
+        # Draw nodes and edges
+        nx.draw_networkx_nodes(filtered_G, pos, node_size=node_sizes, ax=ax)
+        if self.G.is_directed():
+            # Customize arrow style for directed graphs to avoid clutter
+            nx.draw_networkx_edges(filtered_G, pos, ax=ax, arrows=True, arrowsize=10, arrowstyle='->')
+        else:
+            nx.draw_networkx_edges(filtered_G, pos, ax=ax)
+
+        # Draw labels for small graphs
+        if len(filtered_nodes) <= 50:
+            nx.draw_networkx_labels(filtered_G, pos, font_size=8, ax=ax)
+
+        # Set title
+        plt.title(f"Nodes with {centrality_type.capitalize()} ≥ {threshold}", pad=20)
+        self.canvas.draw()
+
+     except Exception as e:
+        self.handle_error("Filter Error", str(e))
 
     def show_conductance(self):
         try:
